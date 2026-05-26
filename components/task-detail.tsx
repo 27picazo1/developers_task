@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { upload } from '@vercel/blob/client'
 import { createClient } from '@/lib/supabase/client'
 import type { TaskWithRelations, Subtask, Comment, Attachment, Category, TaskStatus, TaskPriority } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -137,24 +136,25 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setUploading(false); return }
 
-    for (const file of Array.from(files)) {
+    for (const file of Array.from(files) as File[]) {
       try {
-        const timestamp = Date.now()
-        const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-        const pathname = `tasks/${user.id}/${timestamp}-${safeName}`
+        const formData = new FormData()
+        formData.append('file', file)
 
-        const blob = await upload(pathname, file, {
-          access: 'public',
-          handleUploadUrl: '/api/upload',
-        })
+        const res = await fetch('/api/upload', { method: 'POST', body: formData })
+        if (!res.ok) {
+          console.error('Upload failed:', await res.text())
+          continue
+        }
 
+        const { url, fileName, fileType, fileSize } = await res.json()
         await supabase.from('attachments').insert({
           task_id: task.id,
           user_id: user.id,
-          file_name: file.name,
-          file_path: blob.url,
-          file_type: file.type || 'application/octet-stream',
-          file_size: file.size,
+          file_name: fileName,
+          file_path: url,
+          file_type: fileType,
+          file_size: fileSize,
         })
       } catch (err) {
         console.error('Upload error:', err)

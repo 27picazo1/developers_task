@@ -1,54 +1,47 @@
-import { handleUpload, type HandleUploadBody } from '@vercel/blob/next'
+import { put } from '@vercel/blob'
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const body = (await request.json()) as HandleUploadBody
-
+export async function POST(request: NextRequest) {
   try {
-    const jsonResponse = await handleUpload({
-      body,
-      request,
-      onBeforeGenerateToken: async () => {
-        const supabase = await createClient()
-        const { data: { user } } = await supabase.auth.getUser()
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
 
-        if (!user) throw new Error('Unauthorized')
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-        return {
-          maximumSizeInBytes: 300 * 1024 * 1024, // 300MB
-          allowedContentTypes: [
-            'image/*',
-            'video/*',
-            'application/pdf',
-            'application/zip',
-            'application/x-zip-compressed',
-            'application/x-rar-compressed',
-            'application/x-rar',
-            'application/vnd.rar',
-            'application/x-7z-compressed',
-            'application/gzip',
-            'application/x-tar',
-            'text/plain',
-            'text/markdown',
-            'application/json',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/octet-stream',
-          ],
-          tokenPayload: user.id,
-        }
-      },
-      onUploadCompleted: async () => {
-        // Metadata is saved by the client after upload() resolves
-      },
+    const formData = await request.formData()
+    const file = formData.get('file') as File
+
+    if (!file) {
+      return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+    }
+
+    // Validate file size (max 300MB — Vercel Blob supports it, but note that
+    // Vercel serverless functions have a 4.5MB request body limit on the free plan.
+    // For large files, consider upgrading to Vercel Pro or using direct client upload.
+    if (file.size > 300 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File too large (max 300MB)' }, { status: 400 })
+    }
+
+    const timestamp = Date.now()
+    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+    const pathname = `tasks/${user.id}/${timestamp}-${safeName}`
+
+    const blob = await put(pathname, file, {
+      access: 'public',
     })
 
-    return NextResponse.json(jsonResponse)
+    return NextResponse.json({
+      pathname: blob.pathname,
+      url: blob.url,
+      fileName: file.name,
+      fileType: file.type || 'application/octet-stream',
+      fileSize: file.size,
+    })
   } catch (error) {
-    return NextResponse.json(
-      { error: (error as Error).message },
-      { status: 400 },
-    )
+    console.error('Upload error:', error)
+    return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
   }
 }
