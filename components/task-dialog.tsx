@@ -39,6 +39,7 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [categoryId, setCategoryId] = useState<string>('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const supabase = createClient()
 
   useEffect(() => {
@@ -60,10 +61,12 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
+    setError(null)
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
+        setError('No hay sesión activa. Recarga la página.')
         setLoading(false)
         return
       }
@@ -79,23 +82,25 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
       }
 
       if (task) {
-        const { error } = await supabase
+        const { error: dbError } = await supabase
           .from('tasks')
           .update(taskData)
           .eq('id', task.id)
-        if (error) throw error
+        if (dbError) throw dbError
       } else {
-        const { error } = await supabase
+        const { error: dbError } = await supabase
           .from('tasks')
           .insert(taskData)
-        if (error) throw error
+        if (dbError) throw dbError
       }
 
       setLoading(false)
       onOpenChange(false)
       onSuccess()
-    } catch (err) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message ?? 'Error desconocido'
       console.error('Error saving task:', err)
+      setError(msg)
       setLoading(false)
     }
   }
@@ -111,6 +116,11 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
+            {error && (
+              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="title">Titulo</Label>
               <Input
