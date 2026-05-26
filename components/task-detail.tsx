@@ -147,12 +147,12 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
           continue
         }
 
-        const { url, fileName, fileType, fileSize } = await res.json()
+        const { pathname, fileName, fileType, fileSize } = await res.json()
         await supabase.from('attachments').insert({
           task_id: task.id,
           user_id: user.id,
           file_name: fileName,
-          file_path: url,
+          file_path: pathname,
           file_type: fileType,
           file_size: fileSize,
         })

@@ -30,12 +30,11 @@ export async function POST(request: NextRequest) {
     const pathname = `tasks/${user.id}/${timestamp}-${safeName}`
 
     const blob = await put(pathname, file, {
-      access: 'public',
+      access: 'private',
     })
 
     return NextResponse.json({
       pathname: blob.pathname,
-      url: blob.url,
       fileName: file.name,
       fileType: file.type || 'application/octet-stream',
       fileSize: file.size,
