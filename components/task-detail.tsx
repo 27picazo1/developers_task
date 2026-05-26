@@ -41,6 +41,8 @@ import {
   Upload,
   FileText,
   Image as ImageIcon,
+  Video,
+  FileArchive,
   Download,
   Send,
   Loader2,
@@ -187,6 +189,8 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
   }
 
   const isImage = (fileType: string) => fileType.startsWith('image/')
+  const isVideo = (fileType: string) => fileType.startsWith('video/')
+  const isArchive = (fileType: string) => ['application/zip', 'application/x-rar-compressed', 'application/x-rar', 'application/x-7z-compressed', 'application/gzip', 'application/x-tar'].includes(fileType) || /\.(zip|rar|7z|tar|gz)$/i.test(fileType)
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -318,7 +322,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                   multiple
                   className="hidden"
                   onChange={handleFileUpload}
-                  accept="image/*,.pdf,.doc,.docx,.txt,.md,.lua,.js,.ts,.json"
+                  accept="image/*,video/*,.pdf,.doc,.docx,.txt,.md,.lua,.js,.ts,.json,.rar,.zip,.7z,.tar,.gz"
                 />
               </div>
               {task.attachments.length > 0 && (
@@ -336,6 +340,14 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                             alt={attachment.file_name}
                             className="h-full w-full object-cover"
                           />
+                        </div>
+                      ) : isVideo(attachment.file_type) ? (
+                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                          <Video className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      ) : isArchive(attachment.file_type) ? (
+                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                          <FileArchive className="h-5 w-5 text-muted-foreground" />
                         </div>
                       ) : (
                         <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">

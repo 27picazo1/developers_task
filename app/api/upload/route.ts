@@ -18,9 +18,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
 
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File too large (max 10MB)' }, { status: 400 })
+    // Validate file size (max 100MB)
+    if (file.size > 100 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File too large (max 100MB)' }, { status: 400 })
     }
 
     // Create unique filename with user id prefix for organization
