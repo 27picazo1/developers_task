@@ -90,7 +90,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
   }
 
   const handleCategoryChange = async (categoryId: string) => {
-    await supabase.from('tasks').update({ category_id: categoryId || null }).eq('id', task.id)
+    await supabase.from('tasks').update({ category_id: categoryId === 'none' ? null : categoryId }).eq('id', task.id)
     onUpdate()
   }
 
@@ -228,12 +228,12 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                   <SelectItem value="high">Prioridad Alta</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={task.category_id || ''} onValueChange={handleCategoryChange}>
+              <Select value={task.category_id || 'none'} onValueChange={handleCategoryChange}>
                 <SelectTrigger className="w-auto h-8 text-xs">
                   <SelectValue placeholder="Sin categoria" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Sin categoria</SelectItem>
+                  <SelectItem value="none">Sin categoria</SelectItem>
                   {categories.map((cat) => (
                     <SelectItem key={cat.id} value={cat.id}>
                       <div className="flex items-center gap-2">
