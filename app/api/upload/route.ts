@@ -1,45 +1,54 @@
-import { put } from '@vercel/blob'
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/next'
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<Response> {
+  const body = (await request.json()) as HandleUploadBody
+
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const jsonResponse = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async () => {
+        const supabase = await createClient()
+        const { data: { user } } = await supabase.auth.getUser()
 
-    const formData = await request.formData()
-    const file = formData.get('file') as File
+        if (!user) throw new Error('Unauthorized')
 
-    if (!file) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 })
-    }
-
-    // Validate file size (max 300MB)
-    if (file.size > 300 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File too large (max 300MB)' }, { status: 400 })
-    }
-
-    // Create unique filename with user id prefix for organization
-    const timestamp = Date.now()
-    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-    const pathname = `tasks/${user.id}/${timestamp}-${safeName}`
-
-    const blob = await put(pathname, file, {
-      access: 'private',
+        return {
+          maximumSizeInBytes: 300 * 1024 * 1024, // 300MB
+          allowedContentTypes: [
+            'image/*',
+            'video/*',
+            'application/pdf',
+            'application/zip',
+            'application/x-zip-compressed',
+            'application/x-rar-compressed',
+            'application/x-rar',
+            'application/vnd.rar',
+            'application/x-7z-compressed',
+            'application/gzip',
+            'application/x-tar',
+            'text/plain',
+            'text/markdown',
+            'application/json',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/octet-stream',
+          ],
+          tokenPayload: user.id,
+        }
+      },
+      onUploadCompleted: async () => {
+        // Metadata is saved by the client after upload() resolves
+      },
     })
 
-    return NextResponse.json({ 
-      pathname: blob.pathname,
-      fileName: file.name,
-      fileType: file.type,
-      fileSize: file.size
-    })
+    return NextResponse.json(jsonResponse)
   } catch (error) {
-    console.error('Upload error:', error)
-    return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
+    return NextResponse.json(
+      { error: (error as Error).message },
+      { status: 400 },
+    )
   }
 }
