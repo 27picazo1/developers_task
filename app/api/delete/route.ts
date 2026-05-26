@@ -1,4 +1,3 @@
-import { del } from '@vercel/blob'
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
@@ -6,7 +5,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    
+
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -17,12 +16,13 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'No pathname provided' }, { status: 400 })
     }
 
-    // Verify the file belongs to the user
     if (!pathname.includes(user.id)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    await del(pathname)
+    const { error } = await supabase.storage.from('attachments').remove([pathname])
+
+    if (error) throw error
 
     return NextResponse.json({ success: true })
   } catch (error) {

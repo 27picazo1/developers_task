@@ -138,23 +138,23 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
 
     for (const file of Array.from(files) as File[]) {
       try {
-        const formData = new FormData()
-        formData.append('file', file)
+        const timestamp = Date.now()
+        const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+        const storagePath = `${user.id}/${timestamp}-${safeName}`
 
-        const res = await fetch('/api/upload', { method: 'POST', body: formData })
-        if (!res.ok) {
-          console.error('Upload failed:', await res.text())
-          continue
-        }
+        const { data, error } = await supabase.storage
+          .from('attachments')
+          .upload(storagePath, file)
 
-        const { pathname, fileName, fileType, fileSize } = await res.json()
+        if (error) throw error
+
         await supabase.from('attachments').insert({
           task_id: task.id,
           user_id: user.id,
-          file_name: fileName,
-          file_path: pathname,
-          file_type: fileType,
-          file_size: fileSize,
+          file_name: file.name,
+          file_path: data.path,
+          file_type: file.type || 'application/octet-stream',
+          file_size: file.size,
         })
       } catch (err) {
         console.error('Upload error:', err)
