@@ -152,7 +152,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
           task_id: task.id,
           user_id: user.id,
           file_name: file.name,
-          file_path: blob.pathname,
+          file_path: blob.url,
           file_type: file.type || 'application/octet-stream',
           file_size: file.size,
         })
@@ -191,6 +191,8 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     onDelete()
   }
 
+  const fileUrl = (path: string) =>
+    path.startsWith('http') ? path : `/api/file?pathname=${encodeURIComponent(path)}`
   const isImage = (fileType: string) => fileType.startsWith('image/')
   const isVideo = (fileType: string) => fileType.startsWith('video/')
   const isArchive = (fileType: string) => ['application/zip', 'application/x-rar-compressed', 'application/x-rar', 'application/x-7z-compressed', 'application/gzip', 'application/x-tar'].includes(fileType) || /\.(zip|rar|7z|tar|gz)$/i.test(fileType)
@@ -339,7 +341,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                         <div className="h-10 w-10 rounded bg-muted flex items-center justify-center overflow-hidden">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                            src={fileUrl(attachment.file_path)}
                             alt={attachment.file_name}
                             className="h-full w-full object-cover"
                           />
@@ -364,7 +366,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
                         <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
                           <a
-                            href={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                            href={fileUrl(attachment.file_path)}
                             download={attachment.file_name}
                           >
                             <Download className="h-4 w-4" />
@@ -390,14 +392,14 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                     .map((attachment) => (
                       <a
                         key={attachment.id}
-                        href={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                        href={fileUrl(attachment.file_path)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded-lg overflow-hidden border border-border/50 hover:border-primary/50 transition-colors"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                          src={fileUrl(attachment.file_path)}
                           alt={attachment.file_name}
                           className="w-full h-32 object-cover"
                         />
