@@ -70,6 +70,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
   const [newComment, setNewComment] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -126,6 +127,18 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     })
     setNewComment('')
     onUpdate()
+  }
+
+  const handleDeleteComment = async (commentId: string) => {
+    setDeletingCommentId(commentId)
+    try {
+      await supabase.from('comments').delete().eq('id', commentId).eq('task_id', task.id)
+      onUpdate()
+    } catch (err) {
+      console.error('Delete comment error:', err)
+    } finally {
+      setDeletingCommentId(null)
+    }
   }
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -440,20 +453,36 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
               {task.comments.length > 0 && (
                 <div className="space-y-3">
                   {task.comments.map((comment) => (
-                    <div key={comment.id} className="flex gap-3">
+                    <div key={comment.id} className="group/comment flex gap-3 rounded-lg p-2 transition-colors hover:bg-muted/30">
                       <Avatar className="h-8 w-8 shrink-0">
                         <AvatarFallback className="bg-primary/10 text-primary text-xs">
                           {comment.profile?.display_name?.[0]?.toUpperCase() || 'U'}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">
-                            {comment.profile?.display_name || 'Usuario'}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: es })}
-                          </span>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">
+                              {comment.profile?.display_name || 'Usuario'}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: es })}
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover/comment:opacity-100"
+                            onClick={() => handleDeleteComment(comment.id)}
+                            disabled={deletingCommentId === comment.id}
+                          >
+                            {deletingCommentId === comment.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
                         </div>
                         <p className="text-sm text-muted-foreground">{comment.content}</p>
                       </div>
