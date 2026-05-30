@@ -1,6 +1,6 @@
 'use client'
 
-import type { Task, Category } from '@/lib/types'
+import type { Task } from '@/lib/types'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { CheckCircle2, Circle, Clock, AlertTriangle, MessageSquare, Paperclip, CheckSquare, ArrowUpRight } from 'lucide-react'
@@ -26,12 +26,15 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
   const status = statusConfig[task.status]
   const priority = priorityConfig[task.priority]
   const StatusIcon = status.icon
+  const coverImage = task.attachments?.find((attachment) => attachment.file_type.startsWith('image/'))
 
   const completedSubtasks = task.subtasks?.filter((s) => s.completed).length || 0
   const totalSubtasks = task.subtasks?.length || 0
   const commentsCount = task.comments?.length || 0
   const attachmentsCount = task.attachments?.length || 0
   const progress = totalSubtasks > 0 ? Math.round((completedSubtasks / totalSubtasks) * 100) : 0
+  const fileUrl = (path: string) =>
+    path.startsWith('http') ? path : `/api/file?pathname=${encodeURIComponent(path)}`
 
   return (
     <Card
@@ -44,6 +47,17 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
           style={{ width: totalSubtasks > 0 ? `${progress}%` : task.status === 'completed' ? '100%' : task.status === 'in_progress' ? '55%' : '22%' }}
         />
       </div>
+      {coverImage && (
+        <div className="relative h-36 overflow-hidden border-b border-border/50 bg-muted/30">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={fileUrl(coverImage.file_path)}
+            alt={coverImage.file_name}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-background/65 via-transparent to-transparent" />
+        </div>
+      )}
       <CardHeader className="p-4 pb-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 space-y-2">

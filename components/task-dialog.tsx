@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Loader2 } from 'lucide-react'
+import { ImagePlus, Loader2, X } from 'lucide-react'
 import type { Task, Category, TaskStatus, TaskPriority } from '@/lib/types'
 
 interface TaskDialogProps {
@@ -38,8 +38,10 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
   const [status, setStatus] = useState<TaskStatus>('pending')
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [categoryId, setCategoryId] = useState<string>('')
+  const [imageFiles, setImageFiles] = useState<File[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
 
   useEffect(() => {
@@ -56,7 +58,48 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
       setPriority('medium')
       setCategoryId('none')
     }
+    setImageFiles([])
   }, [task, open])
+
+  const uploadImages = async (files: File[], taskId: string, userId: string) => {
+    for (const file of files) {
+      const signedUrlRes = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          contentType: file.type || 'application/octet-stream',
+        }),
+      })
+
+      const signedUrlData = await signedUrlRes.json()
+
+      if (!signedUrlRes.ok) {
+        throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
+      }
+
+      const upload = await fetch(signedUrlData.uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      })
+
+      if (!upload.ok) {
+        throw new Error('Cloudflare R2 rechazo la subida de la imagen')
+      }
+
+      const { error: attachmentError } = await supabase.from('attachments').insert({
+        task_id: taskId,
+        user_id: userId,
+        file_name: file.name,
+        file_path: signedUrlData.fileUrl || signedUrlData.key,
+        file_type: file.type || 'application/octet-stream',
+        file_size: file.size,
+      })
+
+      if (attachmentError) throw attachmentError
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -81,6 +124,8 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
         updated_at: new Date().toISOString(),
       }
 
+      let taskId = task?.id
+
       if (task) {
         const { error: dbError } = await supabase
           .from('tasks')
@@ -88,13 +133,21 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
           .eq('id', task.id)
         if (dbError) throw dbError
       } else {
-        const { error: dbError } = await supabase
+        const { data: createdTask, error: dbError } = await supabase
           .from('tasks')
           .insert(taskData)
+          .select('id')
+          .single()
         if (dbError) throw dbError
+        taskId = createdTask.id
+      }
+
+      if (imageFiles.length > 0 && taskId) {
+        await uploadImages(imageFiles, taskId, user.id)
       }
 
       setLoading(false)
+      setImageFiles([])
       onOpenChange(false)
       onSuccess()
     } catch (err: unknown) {
@@ -140,6 +193,44 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="task-images">Imagenes de referencia</Label>
+              <div className="rounded-lg border border-dashed border-border/70 bg-background/35 p-3">
+                <Input
+                  ref={imageInputRef}
+                  id="task-images"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => setImageFiles(Array.from(e.target.files || []))}
+                />
+                <Button type="button" variant="outline" size="sm" onClick={() => imageInputRef.current?.click()}>
+                  <ImagePlus className="mr-2 h-4 w-4" />
+                  Anadir imagenes
+                </Button>
+                {imageFiles.length > 0 && (
+                  <div className="mt-3 grid gap-2">
+                    {imageFiles.map((file, index) => (
+                      <div key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
+                        <span className="truncate">{file.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setImageFiles((files) => files.filter((_, i) => i !== index))}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Sirven como captura del bug, preview del script o referencia visual.
+                </p>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
