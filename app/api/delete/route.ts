@@ -18,6 +18,10 @@ function getR2Key(pathname: string) {
     return decodeURIComponent(new URL(pathname).pathname.replace(/^\/+/, ''))
   }
 
+  if (pathname.startsWith('r2/')) {
+    return pathname
+  }
+
   return null
 }
 

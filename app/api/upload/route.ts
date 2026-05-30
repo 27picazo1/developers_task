@@ -33,11 +33,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing filename' }, { status: 400 })
     }
 
-    if (!process.env.R2_BUCKET_NAME || !publicBaseUrl) {
+    if (!process.env.R2_BUCKET_NAME) {
       return NextResponse.json({ error: 'R2 is not configured' }, { status: 500 })
     }
 
-    const key = `${user.id}/${Date.now()}-${sanitizeFilename(filename)}`
+    const key = `r2/${user.id}/${Date.now()}-${sanitizeFilename(filename)}`
 
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 
     // Genera un enlace valido solo por 5 minutos para subir el archivo.
     const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 })
-    const fileUrl = `${publicBaseUrl.replace(/\/$/, '')}/${key}`
+    const fileUrl = publicBaseUrl ? `${publicBaseUrl.replace(/\/$/, '')}/${key}` : null
 
     return NextResponse.json({ uploadUrl, fileUrl, key })
   } catch (error) {
