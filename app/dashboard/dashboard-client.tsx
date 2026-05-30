@@ -21,7 +21,6 @@ import {
 import {
   Plus,
   Search,
-  Filter,
   Tag,
   MoreHorizontal,
   Pencil,
@@ -30,6 +29,12 @@ import {
   Circle,
   Clock,
   Loader2,
+  Activity,
+  Flame,
+  GitBranch,
+  ServerCog,
+  TerminalSquare,
+  UploadCloud,
 } from 'lucide-react'
 
 interface DashboardClientProps {
@@ -125,18 +130,100 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
     in_progress: tasks.filter((t) => t.status === 'in_progress').length,
     completed: tasks.filter((t) => t.status === 'completed').length,
   }
+  const highPriorityCount = tasks.filter((t) => t.priority === 'high').length
+  const attachmentsCount = tasks.reduce((count, task) => count + (task.attachments?.length || 0), 0)
 
   return (
     <div className="min-h-screen bg-background">
       <Header profile={profile} />
       
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <section className="mb-6 overflow-hidden rounded-lg border border-border/60 bg-card/40">
+          <div className="grid gap-0 lg:grid-cols-[1.4fr_0.9fr]">
+            <div className="relative p-5 sm:p-6">
+              <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(52,211,153,0.14),transparent_42%),linear-gradient(rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.045)_1px,transparent_1px)] bg-[length:auto,28px_28px,28px_28px]" />
+              <div className="relative">
+                <div className="mb-5 flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                    <ServerCog className="mr-1 h-3 w-3" />
+                    Workspace FiveM
+                  </Badge>
+                  <Badge variant="outline" className="border-amber-500/25 bg-amber-500/10 text-amber-300">
+                    <Activity className="mr-1 h-3 w-3" />
+                    {statusCounts.in_progress} en progreso
+                  </Badge>
+                </div>
+                <div className="max-w-3xl space-y-3">
+                  <h1 className="text-2xl font-semibold tracking-normal text-balance sm:text-3xl">
+                    Panel de desarrollo para scripts, fixes y releases de FiveM.
+                  </h1>
+                  <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                    Prioriza bugs, organiza recursos por categoria y adjunta builds pesadas sin pasar por el limite de Vercel.
+                  </p>
+                </div>
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-md border border-border/60 bg-background/45 p-3">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <TerminalSquare className="h-3.5 w-3.5 text-primary" />
+                      Backlog total
+                    </div>
+                    <p className="mt-2 text-2xl font-semibold">{tasks.length}</p>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-background/45 p-3">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Flame className="h-3.5 w-3.5 text-red-300" />
+                      Alta prioridad
+                    </div>
+                    <p className="mt-2 text-2xl font-semibold">{highPriorityCount}</p>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-background/45 p-3">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <UploadCloud className="h-3.5 w-3.5 text-sky-300" />
+                      Archivos
+                    </div>
+                    <p className="mt-2 text-2xl font-semibold">{attachmentsCount}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-border/60 bg-background/30 p-5 lg:border-l lg:border-t-0">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Estado del sprint</p>
+                  <p className="text-xs text-muted-foreground">Vista rapida del pipeline</p>
+                </div>
+                <GitBranch className="h-4 w-4 text-primary" />
+              </div>
+              <div className="space-y-3">
+                {[
+                  { label: 'Pendientes', value: statusCounts.pending, color: 'bg-blue-400' },
+                  { label: 'En progreso', value: statusCounts.in_progress, color: 'bg-amber-400' },
+                  { label: 'Completadas', value: statusCounts.completed, color: 'bg-emerald-400' },
+                ].map((item) => {
+                  const width = tasks.length > 0 ? Math.max(8, Math.round((item.value / tasks.length) * 100)) : 0
+                  return (
+                    <div key={item.label} className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">{item.label}</span>
+                        <span className="font-medium">{item.value}</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-muted/60">
+                        <div className={`h-full rounded-full ${item.color}`} style={{ width: `${width}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Stats */}
-        <div className="mb-8 grid grid-cols-3 gap-4">
+        <div className="mb-6 grid gap-3 sm:grid-cols-3">
           <button
             onClick={() => setFilterStatus(filterStatus === 'pending' ? 'all' : 'pending')}
-            className={`flex items-center gap-3 rounded-lg border p-4 transition-colors ${
-              filterStatus === 'pending' ? 'border-blue-500/50 bg-blue-500/10' : 'border-border/50 bg-card/50 hover:bg-card'
+            className={`flex min-h-24 items-center gap-3 rounded-lg border p-4 text-left transition-all hover:-translate-y-0.5 ${
+              filterStatus === 'pending' ? 'border-blue-500/50 bg-blue-500/10' : 'border-border/60 bg-card/45 hover:bg-card/70'
             }`}
           >
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/10">
@@ -144,13 +231,13 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
             </div>
             <div className="text-left">
               <p className="text-2xl font-bold">{statusCounts.pending}</p>
-              <p className="text-sm text-muted-foreground">Pendientes</p>
+              <p className="text-sm text-muted-foreground">Por revisar</p>
             </div>
           </button>
           <button
             onClick={() => setFilterStatus(filterStatus === 'in_progress' ? 'all' : 'in_progress')}
-            className={`flex items-center gap-3 rounded-lg border p-4 transition-colors ${
-              filterStatus === 'in_progress' ? 'border-amber-500/50 bg-amber-500/10' : 'border-border/50 bg-card/50 hover:bg-card'
+            className={`flex min-h-24 items-center gap-3 rounded-lg border p-4 text-left transition-all hover:-translate-y-0.5 ${
+              filterStatus === 'in_progress' ? 'border-amber-500/50 bg-amber-500/10' : 'border-border/60 bg-card/45 hover:bg-card/70'
             }`}
           >
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10">
@@ -163,8 +250,8 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
           </button>
           <button
             onClick={() => setFilterStatus(filterStatus === 'completed' ? 'all' : 'completed')}
-            className={`flex items-center gap-3 rounded-lg border p-4 transition-colors ${
-              filterStatus === 'completed' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-border/50 bg-card/50 hover:bg-card'
+            className={`flex min-h-24 items-center gap-3 rounded-lg border p-4 text-left transition-all hover:-translate-y-0.5 ${
+              filterStatus === 'completed' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-border/60 bg-card/45 hover:bg-card/70'
             }`}
           >
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10">
@@ -178,7 +265,7 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
         </div>
 
         {/* Toolbar */}
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-5 flex flex-col gap-4 rounded-lg border border-border/60 bg-card/35 p-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-1 items-center gap-3">
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

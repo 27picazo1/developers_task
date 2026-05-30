@@ -3,7 +3,7 @@
 import type { Task, Category } from '@/lib/types'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { CheckCircle2, Circle, Clock, AlertTriangle, MessageSquare, Paperclip, CheckSquare } from 'lucide-react'
+import { CheckCircle2, Circle, Clock, AlertTriangle, MessageSquare, Paperclip, CheckSquare, ArrowUpRight } from 'lucide-react'
 
 interface TaskCardProps {
   task: Task
@@ -31,20 +31,39 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
   const totalSubtasks = task.subtasks?.length || 0
   const commentsCount = task.comments?.length || 0
   const attachmentsCount = task.attachments?.length || 0
+  const progress = totalSubtasks > 0 ? Math.round((completedSubtasks / totalSubtasks) * 100) : 0
 
   return (
     <Card
-      className="group cursor-pointer border-border/50 bg-card/50 transition-all hover:border-primary/30 hover:bg-card"
+      className="group cursor-pointer gap-0 overflow-hidden rounded-lg border-border/60 bg-card/70 py-0 shadow-none transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-[0_18px_45px_rgba(0,0,0,0.22)]"
       onClick={onClick}
     >
+      <div className="h-1 w-full bg-muted/40">
+        <div
+          className={`h-full ${task.status === 'completed' ? 'bg-emerald-400' : task.status === 'in_progress' ? 'bg-amber-400' : 'bg-blue-400'}`}
+          style={{ width: totalSubtasks > 0 ? `${progress}%` : task.status === 'completed' ? '100%' : task.status === 'in_progress' ? '55%' : '22%' }}
+        />
+      </div>
       <CardHeader className="p-4 pb-2">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-medium leading-tight text-balance group-hover:text-primary transition-colors">
-            {task.title}
-          </h3>
-          {task.priority === 'high' && (
-            <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
-          )}
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className={status.className}>
+                <StatusIcon className="mr-1 h-3 w-3" />
+                {status.label}
+              </Badge>
+              {task.priority === 'high' && (
+                <Badge variant="outline" className="border-red-500/30 bg-red-500/10 text-red-300">
+                  <AlertTriangle className="mr-1 h-3 w-3" />
+                  Bloqueante
+                </Badge>
+              )}
+            </div>
+            <h3 className="text-base font-semibold leading-tight text-balance transition-colors group-hover:text-primary">
+              {task.title}
+            </h3>
+          </div>
+          <ArrowUpRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:text-primary group-hover:opacity-100" />
         </div>
       </CardHeader>
       <CardContent className="p-4 pt-0 space-y-3">
@@ -55,12 +74,8 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className={status.className}>
-            <StatusIcon className="mr-1 h-3 w-3" />
-            {status.label}
-          </Badge>
           <Badge variant="outline" className={priority.className}>
-            {priority.label}
+            Prioridad {priority.label}
           </Badge>
           {task.category && (
             <Badge
@@ -77,7 +92,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
         </div>
 
         {(totalSubtasks > 0 || commentsCount > 0 || attachmentsCount > 0) && (
-          <div className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
+          <div className="flex items-center gap-3 border-t border-border/50 pt-3 text-xs text-muted-foreground">
             {totalSubtasks > 0 && (
               <span className="flex items-center gap-1">
                 <CheckSquare className="h-3.5 w-3.5" />
