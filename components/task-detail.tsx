@@ -40,7 +40,6 @@ import {
   Trash2,
   Upload,
   FileText,
-  Image as ImageIcon,
   Video,
   FileArchive,
   Download,
@@ -70,6 +69,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
   const [newSubtask, setNewSubtask] = useState('')
   const [newComment, setNewComment] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -133,31 +133,49 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     if (!files || files.length === 0) return
 
     setUploading(true)
+    setUploadError(null)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setUploading(false); return }
 
     for (const file of Array.from(files) as File[]) {
       try {
-        const timestamp = Date.now()
-        const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-        const storagePath = `${user.id}/${timestamp}-${safeName}`
+        const signedUrlRes = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream',
+          }),
+        })
 
-        const { data, error } = await supabase.storage
-          .from('attachments')
-          .upload(storagePath, file)
+        const signedUrlData = await signedUrlRes.json()
 
-        if (error) throw error
+        if (!signedUrlRes.ok) {
+          throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
+        }
+
+        const upload = await fetch(signedUrlData.uploadUrl, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        })
+
+        if (!upload.ok) {
+          throw new Error('Cloudflare R2 rechazo la subida')
+        }
 
         await supabase.from('attachments').insert({
           task_id: task.id,
           user_id: user.id,
           file_name: file.name,
-          file_path: data.path,
+          file_path: signedUrlData.fileUrl || signedUrlData.key,
           file_type: file.type || 'application/octet-stream',
           file_size: file.size,
         })
       } catch (err) {
         console.error('Upload error:', err)
+        const message = err instanceof Error ? err.message : 'Error al subir el archivo'
+        setUploadError(message)
       }
     }
 
@@ -330,6 +348,11 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                   accept="image/*,video/*,.pdf,.doc,.docx,.txt,.md,.lua,.js,.ts,.json,.rar,.zip,.7z,.tar,.gz"
                 />
               </div>
+              {uploadError && (
+                <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {uploadError}
+                </div>
+              )}
               {task.attachments.length > 0 && (
                 <div className="grid gap-2">
                   {task.attachments.map((attachment) => (
