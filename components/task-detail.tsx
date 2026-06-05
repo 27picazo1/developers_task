@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { TaskWithRelations, Subtask, Comment, Attachment, Category, TaskStatus, TaskPriority } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -38,7 +38,7 @@ import {
   Clock,
   Plus,
   Trash2,
-  Upload,
+  Link,
   FileText,
   Video,
   FileArchive,
@@ -68,12 +68,12 @@ const statusConfig = {
 export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onDelete }: TaskDetailProps) {
   const [newSubtask, setNewSubtask] = useState('')
   const [newComment, setNewComment] = useState('')
-  const [uploading, setUploading] = useState(false)
+  const [imageUrlInput, setImageUrlInput] = useState('')
+  const [addingUrl, setAddingUrl] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
 
   if (!task) return null
@@ -141,109 +141,40 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     }
   }
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
+  const handleAddUrl = async () => {
+    const url = imageUrlInput.trim()
+    if (!url) return
 
-    setUploading(true)
+    setAddingUrl(true)
     setUploadError(null)
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setUploading(false); return }
+    if (!user) { setAddingUrl(false); return }
 
-    for (const file of Array.from(files) as File[]) {
-      try {
-        const isImage = file.type.startsWith('image/')
-        let filePath: string
+    try {
+      const fileName = url.split('/').pop()?.split('?')[0] || 'imagen'
+      const ext = fileName.split('.').pop()?.toLowerCase()
+      const fileType = ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
+        ? `image/${ext === 'jpg' ? 'jpeg' : ext}`
+        : 'image/url'
 
-        if (isImage) {
-          const imgurForm = new FormData()
-          imgurForm.append('file', file)
+      await supabase.from('attachments').insert({
+        task_id: task.id,
+        user_id: user.id,
+        file_name: fileName,
+        file_path: url,
+        file_type: fileType,
+        file_size: 0,
+      })
 
-          const imgurRes = await fetch('/api/upload-imgur', {
-            method: 'POST',
-            body: imgurForm,
-          })
-
-          const imgurData = await imgurRes.json()
-
-          if (imgurRes.ok) {
-            filePath = imgurData.fileUrl
-          } else {
-            // Fallback a R2 si Imgur no esta configurado
-            const signedUrlRes = await fetch('/api/upload', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                filename: file.name,
-                contentType: file.type || 'application/octet-stream',
-              }),
-            })
-
-            const signedUrlData = await signedUrlRes.json()
-
-            if (!signedUrlRes.ok) {
-              throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
-            }
-
-            const upload = await fetch(signedUrlData.uploadUrl, {
-              method: 'PUT',
-              body: file,
-              headers: { 'Content-Type': file.type || 'application/octet-stream' },
-            })
-
-            if (!upload.ok) {
-              throw new Error('Cloudflare R2 rechazo la subida')
-            }
-
-            filePath = signedUrlData.fileUrl || signedUrlData.key
-          }
-        } else {
-          const signedUrlRes = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              contentType: file.type || 'application/octet-stream',
-            }),
-          })
-
-          const signedUrlData = await signedUrlRes.json()
-
-          if (!signedUrlRes.ok) {
-            throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
-          }
-
-          const upload = await fetch(signedUrlData.uploadUrl, {
-            method: 'PUT',
-            body: file,
-            headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          })
-
-          if (!upload.ok) {
-            throw new Error('Cloudflare R2 rechazo la subida')
-          }
-
-          filePath = signedUrlData.fileUrl || signedUrlData.key
-        }
-
-        await supabase.from('attachments').insert({
-          task_id: task.id,
-          user_id: user.id,
-          file_name: file.name,
-          file_path: filePath,
-          file_type: file.type || 'application/octet-stream',
-          file_size: file.size,
-        })
-      } catch (err) {
-        console.error('Upload error:', err)
-        const message = err instanceof Error ? err.message : 'Error al subir el archivo'
-        setUploadError(message)
-      }
+      setImageUrlInput('')
+      onUpdate()
+    } catch (err) {
+      console.error('Error adding URL:', err)
+      const message = err instanceof Error ? err.message : 'Error al añadir el enlace'
+      setUploadError(message)
     }
 
-    setUploading(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-    onUpdate()
+    setAddingUrl(false)
   }
 
   const isExternalUrl = (path: string) => path.startsWith('http')
@@ -391,29 +322,31 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                 <h3 className="text-sm font-medium">
                   Archivos {task.attachments.length > 0 && `(${task.attachments.length})`}
                 </h3>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                >
-                  {uploading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Upload className="mr-2 h-4 w-4" />
-                      Subir
-                    </>
-                  )}
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={handleFileUpload}
-                  accept="image/*,video/*,.pdf,.doc,.docx,.txt,.md,.lua,.js,.ts,.json,.rar,.zip,.7z,.tar,.gz"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    type="url"
+                    placeholder="https://i.imgur.com/ejemplo.png"
+                    value={imageUrlInput}
+                    onChange={(e) => setImageUrlInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddUrl() } }}
+                    className="h-9"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddUrl}
+                    disabled={addingUrl || !imageUrlInput.trim()}
+                  >
+                    {addingUrl ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Link className="mr-2 h-4 w-4" />
+                        Añadir
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
               {uploadError && (
                 <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">

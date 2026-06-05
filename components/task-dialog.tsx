@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ImagePlus, Loader2, X } from 'lucide-react'
+import { Link, Loader2, X } from 'lucide-react'
 import type { Task, Category, TaskStatus, TaskPriority } from '@/lib/types'
 
 interface TaskDialogProps {
@@ -38,10 +38,10 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
   const [status, setStatus] = useState<TaskStatus>('pending')
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [categoryId, setCategoryId] = useState<string>('')
-  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const [imageUrls, setImageUrls] = useState<string[]>([])
+  const [imageUrlInput, setImageUrlInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const imageInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
 
   useEffect(() => {
@@ -58,92 +58,33 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
       setPriority('medium')
       setCategoryId('none')
     }
-    setImageFiles([])
+    setImageUrls([])
+    setImageUrlInput('')
   }, [task, open])
 
-  const uploadImages = async (files: File[], taskId: string, userId: string) => {
-    for (const file of files) {
-      const isImage = file.type.startsWith('image/')
-      let filePath: string
+  const addUrl = () => {
+    const url = imageUrlInput.trim()
+    if (url && !imageUrls.includes(url)) {
+      setImageUrls([...imageUrls, url])
+      setImageUrlInput('')
+    }
+  }
 
-      if (isImage) {
-        const imgurForm = new FormData()
-        imgurForm.append('file', file)
-
-        const imgurRes = await fetch('/api/upload-imgur', {
-          method: 'POST',
-          body: imgurForm,
-        })
-
-        const imgurData = await imgurRes.json()
-
-        if (imgurRes.ok) {
-          filePath = imgurData.fileUrl
-        } else {
-          // Fallback a R2 si Imgur no esta configurado
-          const signedUrlRes = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              contentType: file.type || 'application/octet-stream',
-            }),
-          })
-
-          const signedUrlData = await signedUrlRes.json()
-
-          if (!signedUrlRes.ok) {
-            throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
-          }
-
-          const upload = await fetch(signedUrlData.uploadUrl, {
-            method: 'PUT',
-            body: file,
-            headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          })
-
-          if (!upload.ok) {
-            throw new Error('Cloudflare R2 rechazo la subida')
-          }
-
-          filePath = signedUrlData.fileUrl || signedUrlData.key
-        }
-      } else {
-        const signedUrlRes = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: file.name,
-            contentType: file.type || 'application/octet-stream',
-          }),
-        })
-
-        const signedUrlData = await signedUrlRes.json()
-
-        if (!signedUrlRes.ok) {
-          throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
-        }
-
-        const upload = await fetch(signedUrlData.uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        })
-
-        if (!upload.ok) {
-          throw new Error('Cloudflare R2 rechazo la subida')
-        }
-
-        filePath = signedUrlData.fileUrl || signedUrlData.key
-      }
+  const uploadImages = async (urls: string[], taskId: string, userId: string) => {
+    for (const url of urls) {
+      const fileName = url.split('/').pop()?.split('?')[0] || 'imagen'
+      const ext = fileName.split('.').pop()?.toLowerCase()
+      const fileType = ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
+        ? `image/${ext === 'jpg' ? 'jpeg' : ext}`
+        : 'image/url'
 
       const { error: attachmentError } = await supabase.from('attachments').insert({
         task_id: taskId,
         user_id: userId,
-        file_name: file.name,
-        file_path: filePath,
-        file_type: file.type || 'application/octet-stream',
-        file_size: file.size,
+        file_name: fileName,
+        file_path: url,
+        file_type: fileType,
+        file_size: 0,
       })
 
       if (attachmentError) throw attachmentError
@@ -191,12 +132,12 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
         taskId = createdTask.id
       }
 
-      if (imageFiles.length > 0 && taskId) {
-        await uploadImages(imageFiles, taskId, user.id)
+      if (imageUrls.length > 0 && taskId) {
+        await uploadImages(imageUrls, taskId, user.id)
       }
 
       setLoading(false)
-      setImageFiles([])
+      setImageUrls([])
       onOpenChange(false)
       onSuccess()
     } catch (err: unknown) {
@@ -244,31 +185,32 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="task-images">Imagenes de referencia</Label>
+              <Label htmlFor="task-image-url">Imagenes de referencia</Label>
               <div className="rounded-lg border border-dashed border-border/70 bg-background/35 p-3">
-                <Input
-                  ref={imageInputRef}
-                  id="task-images"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => setImageFiles(Array.from(e.target.files || []))}
-                />
-                <Button type="button" variant="outline" size="sm" onClick={() => imageInputRef.current?.click()}>
-                  <ImagePlus className="mr-2 h-4 w-4" />
-                  Anadir imagenes
-                </Button>
-                {imageFiles.length > 0 && (
+                <div className="flex gap-2">
+                  <Input
+                    id="task-image-url"
+                    type="url"
+                    placeholder="https://i.imgur.com/ejemplo.png"
+                    value={imageUrlInput}
+                    onChange={(e) => setImageUrlInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addUrl() } }}
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={addUrl} disabled={!imageUrlInput.trim()}>
+                    <Link className="mr-2 h-4 w-4" />
+                    Anadir
+                  </Button>
+                </div>
+                {imageUrls.length > 0 && (
                   <div className="mt-3 grid gap-2">
-                    {imageFiles.map((file, index) => (
-                      <div key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
-                        <span className="truncate">{file.name}</span>
+                    {imageUrls.map((url, index) => (
+                      <div key={`${url}-${index}`} className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
+                        <span className="truncate">{url}</span>
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          onClick={() => setImageFiles((files) => files.filter((_, i) => i !== index))}
+                          onClick={() => setImageUrls((urls) => urls.filter((_, i) => i !== index))}
                         >
                           <X className="h-4 w-4" />
                         </Button>
@@ -277,7 +219,7 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
                   </div>
                 )}
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Sirven como captura del bug, preview del script o referencia visual.
+                  Pega enlaces de Imgur, FiveM Manager o cualquier hosting de imagenes.
                 </p>
               </div>
             </div>
