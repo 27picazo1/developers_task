@@ -63,36 +63,85 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
 
   const uploadImages = async (files: File[], taskId: string, userId: string) => {
     for (const file of files) {
-      const signedUrlRes = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: file.name,
-          contentType: file.type || 'application/octet-stream',
-        }),
-      })
+      const isImage = file.type.startsWith('image/')
+      let filePath: string
 
-      const signedUrlData = await signedUrlRes.json()
+      if (isImage) {
+        const imgurForm = new FormData()
+        imgurForm.append('file', file)
 
-      if (!signedUrlRes.ok) {
-        throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
-      }
+        const imgurRes = await fetch('/api/upload-imgur', {
+          method: 'POST',
+          body: imgurForm,
+        })
 
-      const upload = await fetch(signedUrlData.uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      })
+        const imgurData = await imgurRes.json()
 
-      if (!upload.ok) {
-        throw new Error('Cloudflare R2 rechazo la subida de la imagen')
+        if (imgurRes.ok) {
+          filePath = imgurData.fileUrl
+        } else {
+          // Fallback a R2 si Imgur no esta configurado
+          const signedUrlRes = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: file.name,
+              contentType: file.type || 'application/octet-stream',
+            }),
+          })
+
+          const signedUrlData = await signedUrlRes.json()
+
+          if (!signedUrlRes.ok) {
+            throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
+          }
+
+          const upload = await fetch(signedUrlData.uploadUrl, {
+            method: 'PUT',
+            body: file,
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          })
+
+          if (!upload.ok) {
+            throw new Error('Cloudflare R2 rechazo la subida')
+          }
+
+          filePath = signedUrlData.fileUrl || signedUrlData.key
+        }
+      } else {
+        const signedUrlRes = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream',
+          }),
+        })
+
+        const signedUrlData = await signedUrlRes.json()
+
+        if (!signedUrlRes.ok) {
+          throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
+        }
+
+        const upload = await fetch(signedUrlData.uploadUrl, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        })
+
+        if (!upload.ok) {
+          throw new Error('Cloudflare R2 rechazo la subida')
+        }
+
+        filePath = signedUrlData.fileUrl || signedUrlData.key
       }
 
       const { error: attachmentError } = await supabase.from('attachments').insert({
         task_id: taskId,
         user_id: userId,
         file_name: file.name,
-        file_path: signedUrlData.fileUrl || signedUrlData.key,
+        file_path: filePath,
         file_type: file.type || 'application/octet-stream',
         file_size: file.size,
       })

@@ -152,36 +152,85 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
 
     for (const file of Array.from(files) as File[]) {
       try {
-        const signedUrlRes = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: file.name,
-            contentType: file.type || 'application/octet-stream',
-          }),
-        })
+        const isImage = file.type.startsWith('image/')
+        let filePath: string
 
-        const signedUrlData = await signedUrlRes.json()
+        if (isImage) {
+          const imgurForm = new FormData()
+          imgurForm.append('file', file)
 
-        if (!signedUrlRes.ok) {
-          throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
-        }
+          const imgurRes = await fetch('/api/upload-imgur', {
+            method: 'POST',
+            body: imgurForm,
+          })
 
-        const upload = await fetch(signedUrlData.uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        })
+          const imgurData = await imgurRes.json()
 
-        if (!upload.ok) {
-          throw new Error('Cloudflare R2 rechazo la subida')
+          if (imgurRes.ok) {
+            filePath = imgurData.fileUrl
+          } else {
+            // Fallback a R2 si Imgur no esta configurado
+            const signedUrlRes = await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                filename: file.name,
+                contentType: file.type || 'application/octet-stream',
+              }),
+            })
+
+            const signedUrlData = await signedUrlRes.json()
+
+            if (!signedUrlRes.ok) {
+              throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
+            }
+
+            const upload = await fetch(signedUrlData.uploadUrl, {
+              method: 'PUT',
+              body: file,
+              headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            })
+
+            if (!upload.ok) {
+              throw new Error('Cloudflare R2 rechazo la subida')
+            }
+
+            filePath = signedUrlData.fileUrl || signedUrlData.key
+          }
+        } else {
+          const signedUrlRes = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: file.name,
+              contentType: file.type || 'application/octet-stream',
+            }),
+          })
+
+          const signedUrlData = await signedUrlRes.json()
+
+          if (!signedUrlRes.ok) {
+            throw new Error(signedUrlData.error || 'No se pudo generar el enlace de subida')
+          }
+
+          const upload = await fetch(signedUrlData.uploadUrl, {
+            method: 'PUT',
+            body: file,
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          })
+
+          if (!upload.ok) {
+            throw new Error('Cloudflare R2 rechazo la subida')
+          }
+
+          filePath = signedUrlData.fileUrl || signedUrlData.key
         }
 
         await supabase.from('attachments').insert({
           task_id: task.id,
           user_id: user.id,
           file_name: file.name,
-          file_path: signedUrlData.fileUrl || signedUrlData.key,
+          file_path: filePath,
           file_type: file.type || 'application/octet-stream',
           file_size: file.size,
         })
@@ -197,23 +246,28 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     onUpdate()
   }
 
+  const isExternalUrl = (path: string) => path.startsWith('http')
+
   const handleDeleteAttachment = async (attachment: Attachment) => {
-    await fetch('/api/delete', {
-      method: 'DELETE',
-      body: JSON.stringify({ pathname: attachment.file_path }),
-    })
+    if (!isExternalUrl(attachment.file_path)) {
+      await fetch('/api/delete', {
+        method: 'DELETE',
+        body: JSON.stringify({ pathname: attachment.file_path }),
+      })
+    }
     await supabase.from('attachments').delete().eq('id', attachment.id)
     onUpdate()
   }
 
   const handleDeleteTask = async () => {
     setDeleting(true)
-    // Delete all attachments from blob storage
     for (const attachment of task.attachments) {
-      await fetch('/api/delete', {
-        method: 'DELETE',
-        body: JSON.stringify({ pathname: attachment.file_path }),
-      })
+      if (!isExternalUrl(attachment.file_path)) {
+        await fetch('/api/delete', {
+          method: 'DELETE',
+          body: JSON.stringify({ pathname: attachment.file_path }),
+        })
+      }
     }
     await supabase.from('tasks').delete().eq('id', task.id)
     setDeleting(false)
