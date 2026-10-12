@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Code2, LogOut, ServerCog, User } from 'lucide-react'
+import { Bookmark, Code2, LogOut, ServerCog, User } from 'lucide-react'
 import type { Profile } from '@/lib/types'
 
 interface HeaderProps {
@@ -49,6 +49,12 @@ export function Header({ profile }: HeaderProps) {
               Build queue para scripts, bugs y releases
             </span>
           </div>
+          <nav className="ml-4 hidden items-center gap-1 border-l border-border/60 pl-4 sm:flex" aria-label="Navegación principal">
+            <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard')}>Tareas</Button>
+            <Button variant="ghost" size="sm" onClick={() => router.push('/resources')}>
+              <Bookmark data-icon="inline-start" />Recursos
+            </Button>
+          </nav>
         </div>
 
         <DropdownMenu>
