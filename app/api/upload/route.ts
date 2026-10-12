@@ -1,45 +1,57 @@
-import { put } from '@vercel/blob'
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+
+const s3 = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT_URL,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+})
+
+const publicBaseUrl = process.env.R2_PUBLIC_URL || process.env.NEXT_PUBLIC_R2_PUBLIC_URL
+
+function sanitizeFilename(filename: string) {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+}
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    
+
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const formData = await request.formData()
-    const file = formData.get('file') as File
+    const { filename, contentType } = await request.json()
 
-    if (!file) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+    if (!filename) {
+      return NextResponse.json({ error: 'Missing filename' }, { status: 400 })
     }
 
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File too large (max 10MB)' }, { status: 400 })
+    if (!process.env.R2_BUCKET_NAME) {
+      return NextResponse.json({ error: 'R2 is not configured' }, { status: 500 })
     }
 
-    // Create unique filename with user id prefix for organization
-    const timestamp = Date.now()
-    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-    const pathname = `tasks/${user.id}/${timestamp}-${safeName}`
+    const key = `r2/${user.id}/${Date.now()}-${sanitizeFilename(filename)}`
 
-    const blob = await put(pathname, file, {
-      access: 'private',
+    const command = new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: key,
+      ContentType: contentType || 'application/octet-stream',
     })
 
-    return NextResponse.json({ 
-      pathname: blob.pathname,
-      fileName: file.name,
-      fileType: file.type,
-      fileSize: file.size
-    })
+    // Genera un enlace valido solo por 5 minutos para subir el archivo.
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 })
+    const fileUrl = publicBaseUrl ? `${publicBaseUrl.replace(/\/$/, '')}/${key}` : null
+
+    return NextResponse.json({ uploadUrl, fileUrl, key })
   } catch (error) {
-    console.error('Upload error:', error)
-    return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Upload URL generation failed'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

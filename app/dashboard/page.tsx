@@ -31,7 +31,7 @@ export default async function DashboardPage() {
       *,
       category:categories(*),
       subtasks(*),
-      comments(*, profile:profiles(*)),
+      comments(*),
       attachments(*)
     `)
     .eq('user_id', user.id)

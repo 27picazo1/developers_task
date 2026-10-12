@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Loader2 } from 'lucide-react'
+import { Link, Loader2, X } from 'lucide-react'
 import type { Task, Category, TaskStatus, TaskPriority } from '@/lib/types'
 
 interface TaskDialogProps {
@@ -38,6 +38,8 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
   const [status, setStatus] = useState<TaskStatus>('pending')
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [categoryId, setCategoryId] = useState<string>('')
+  const [imageUrls, setImageUrls] = useState<string[]>([])
+  const [imageUrlInput, setImageUrlInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const supabase = createClient()
@@ -56,7 +58,38 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
       setPriority('medium')
       setCategoryId('none')
     }
+    setImageUrls([])
+    setImageUrlInput('')
   }, [task, open])
+
+  const addUrl = () => {
+    const url = imageUrlInput.trim()
+    if (url && !imageUrls.includes(url)) {
+      setImageUrls([...imageUrls, url])
+      setImageUrlInput('')
+    }
+  }
+
+  const uploadImages = async (urls: string[], taskId: string, userId: string) => {
+    for (const url of urls) {
+      const fileName = url.split('/').pop()?.split('?')[0] || 'imagen'
+      const ext = fileName.split('.').pop()?.toLowerCase()
+      const fileType = ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
+        ? `image/${ext === 'jpg' ? 'jpeg' : ext}`
+        : 'image/url'
+
+      const { error: attachmentError } = await supabase.from('attachments').insert({
+        task_id: taskId,
+        user_id: userId,
+        file_name: fileName,
+        file_path: url,
+        file_type: fileType,
+        file_size: 0,
+      })
+
+      if (attachmentError) throw attachmentError
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -81,6 +114,8 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
         updated_at: new Date().toISOString(),
       }
 
+      let taskId = task?.id
+
       if (task) {
         const { error: dbError } = await supabase
           .from('tasks')
@@ -88,13 +123,21 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
           .eq('id', task.id)
         if (dbError) throw dbError
       } else {
-        const { error: dbError } = await supabase
+        const { data: createdTask, error: dbError } = await supabase
           .from('tasks')
           .insert(taskData)
+          .select('id')
+          .single()
         if (dbError) throw dbError
+        taskId = createdTask.id
+      }
+
+      if (imageUrls.length > 0 && taskId) {
+        await uploadImages(imageUrls, taskId, user.id)
       }
 
       setLoading(false)
+      setImageUrls([])
       onOpenChange(false)
       onSuccess()
     } catch (err: unknown) {
@@ -140,6 +183,45 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: 
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="task-image-url">Imagenes de referencia</Label>
+              <div className="rounded-lg border border-dashed border-border/70 bg-background/35 p-3">
+                <div className="flex gap-2">
+                  <Input
+                    id="task-image-url"
+                    type="url"
+                    placeholder="https://i.imgur.com/ejemplo.png"
+                    value={imageUrlInput}
+                    onChange={(e) => setImageUrlInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addUrl() } }}
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={addUrl} disabled={!imageUrlInput.trim()}>
+                    <Link className="mr-2 h-4 w-4" />
+                    Anadir
+                  </Button>
+                </div>
+                {imageUrls.length > 0 && (
+                  <div className="mt-3 grid gap-2">
+                    {imageUrls.map((url, index) => (
+                      <div key={`${url}-${index}`} className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
+                        <span className="truncate">{url}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setImageUrls((urls) => urls.filter((_, i) => i !== index))}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Pega enlaces de Imgur, FiveM Manager o cualquier hosting de imagenes.
+                </p>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

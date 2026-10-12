@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { TaskWithRelations, Subtask, Comment, Attachment, Category, TaskStatus, TaskPriority } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -38,9 +38,10 @@ import {
   Clock,
   Plus,
   Trash2,
-  Upload,
+  Link,
   FileText,
-  Image as ImageIcon,
+  Video,
+  FileArchive,
   Download,
   Send,
   Loader2,
@@ -67,10 +68,12 @@ const statusConfig = {
 export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onDelete }: TaskDetailProps) {
   const [newSubtask, setNewSubtask] = useState('')
   const [newComment, setNewComment] = useState('')
-  const [uploading, setUploading] = useState(false)
+  const [imageUrlInput, setImageUrlInput] = useState('')
+  const [addingUrl, setAddingUrl] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
 
   if (!task) return null
@@ -126,58 +129,76 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     onUpdate()
   }
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
-
-    setUploading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    for (const file of Array.from(files)) {
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (res.ok) {
-        const { pathname, fileName, fileType, fileSize } = await res.json()
-        await supabase.from('attachments').insert({
-          task_id: task.id,
-          user_id: user.id,
-          file_name: fileName,
-          file_path: pathname,
-          file_type: fileType,
-          file_size: fileSize,
-        })
-      }
+  const handleDeleteComment = async (commentId: string) => {
+    setDeletingCommentId(commentId)
+    try {
+      await supabase.from('comments').delete().eq('id', commentId).eq('task_id', task.id)
+      onUpdate()
+    } catch (err) {
+      console.error('Delete comment error:', err)
+    } finally {
+      setDeletingCommentId(null)
     }
-
-    setUploading(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-    onUpdate()
   }
 
+  const handleAddUrl = async () => {
+    const url = imageUrlInput.trim()
+    if (!url) return
+
+    setAddingUrl(true)
+    setUploadError(null)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setAddingUrl(false); return }
+
+    try {
+      const fileName = url.split('/').pop()?.split('?')[0] || 'imagen'
+      const ext = fileName.split('.').pop()?.toLowerCase()
+      const fileType = ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
+        ? `image/${ext === 'jpg' ? 'jpeg' : ext}`
+        : 'image/url'
+
+      await supabase.from('attachments').insert({
+        task_id: task.id,
+        user_id: user.id,
+        file_name: fileName,
+        file_path: url,
+        file_type: fileType,
+        file_size: 0,
+      })
+
+      setImageUrlInput('')
+      onUpdate()
+    } catch (err) {
+      console.error('Error adding URL:', err)
+      const message = err instanceof Error ? err.message : 'Error al añadir el enlace'
+      setUploadError(message)
+    }
+
+    setAddingUrl(false)
+  }
+
+  const isExternalUrl = (path: string) => path.startsWith('http')
+
   const handleDeleteAttachment = async (attachment: Attachment) => {
-    await fetch('/api/delete', {
-      method: 'DELETE',
-      body: JSON.stringify({ pathname: attachment.file_path }),
-    })
+    if (!isExternalUrl(attachment.file_path)) {
+      await fetch('/api/delete', {
+        method: 'DELETE',
+        body: JSON.stringify({ pathname: attachment.file_path }),
+      })
+    }
     await supabase.from('attachments').delete().eq('id', attachment.id)
     onUpdate()
   }
 
   const handleDeleteTask = async () => {
     setDeleting(true)
-    // Delete all attachments from blob storage
     for (const attachment of task.attachments) {
-      await fetch('/api/delete', {
-        method: 'DELETE',
-        body: JSON.stringify({ pathname: attachment.file_path }),
-      })
+      if (!isExternalUrl(attachment.file_path)) {
+        await fetch('/api/delete', {
+          method: 'DELETE',
+          body: JSON.stringify({ pathname: attachment.file_path }),
+        })
+      }
     }
     await supabase.from('tasks').delete().eq('id', task.id)
     setDeleting(false)
@@ -186,7 +207,11 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
     onDelete()
   }
 
+  const fileUrl = (path: string) =>
+    path.startsWith('http') ? path : `/api/file?pathname=${encodeURIComponent(path)}`
   const isImage = (fileType: string) => fileType.startsWith('image/')
+  const isVideo = (fileType: string) => fileType.startsWith('video/')
+  const isArchive = (fileType: string) => ['application/zip', 'application/x-rar-compressed', 'application/x-rar', 'application/x-7z-compressed', 'application/gzip', 'application/x-tar'].includes(fileType) || /\.(zip|rar|7z|tar|gz)$/i.test(fileType)
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -297,30 +322,37 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                 <h3 className="text-sm font-medium">
                   Archivos {task.attachments.length > 0 && `(${task.attachments.length})`}
                 </h3>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                >
-                  {uploading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Upload className="mr-2 h-4 w-4" />
-                      Subir
-                    </>
-                  )}
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={handleFileUpload}
-                  accept="image/*,.pdf,.doc,.docx,.txt,.md,.lua,.js,.ts,.json"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    type="url"
+                    placeholder="https://i.imgur.com/ejemplo.png"
+                    value={imageUrlInput}
+                    onChange={(e) => setImageUrlInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddUrl() } }}
+                    className="h-9"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddUrl}
+                    disabled={addingUrl || !imageUrlInput.trim()}
+                  >
+                    {addingUrl ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Link className="mr-2 h-4 w-4" />
+                        Añadir
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
+              {uploadError && (
+                <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {uploadError}
+                </div>
+              )}
               {task.attachments.length > 0 && (
                 <div className="grid gap-2">
                   {task.attachments.map((attachment) => (
@@ -332,10 +364,18 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                         <div className="h-10 w-10 rounded bg-muted flex items-center justify-center overflow-hidden">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                            src={fileUrl(attachment.file_path)}
                             alt={attachment.file_name}
                             className="h-full w-full object-cover"
                           />
+                        </div>
+                      ) : isVideo(attachment.file_type) ? (
+                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                          <Video className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      ) : isArchive(attachment.file_type) ? (
+                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                          <FileArchive className="h-5 w-5 text-muted-foreground" />
                         </div>
                       ) : (
                         <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
@@ -349,7 +389,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
                         <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
                           <a
-                            href={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                            href={fileUrl(attachment.file_path)}
                             download={attachment.file_name}
                           >
                             <Download className="h-4 w-4" />
@@ -375,14 +415,14 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
                     .map((attachment) => (
                       <a
                         key={attachment.id}
-                        href={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                        href={fileUrl(attachment.file_path)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded-lg overflow-hidden border border-border/50 hover:border-primary/50 transition-colors"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={`/api/file?pathname=${encodeURIComponent(attachment.file_path)}`}
+                          src={fileUrl(attachment.file_path)}
                           alt={attachment.file_name}
                           className="w-full h-32 object-cover"
                         />
@@ -400,20 +440,36 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
               {task.comments.length > 0 && (
                 <div className="space-y-3">
                   {task.comments.map((comment) => (
-                    <div key={comment.id} className="flex gap-3">
+                    <div key={comment.id} className="group/comment flex gap-3 rounded-lg p-2 transition-colors hover:bg-muted/30">
                       <Avatar className="h-8 w-8 shrink-0">
                         <AvatarFallback className="bg-primary/10 text-primary text-xs">
                           {comment.profile?.display_name?.[0]?.toUpperCase() || 'U'}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">
-                            {comment.profile?.display_name || 'Usuario'}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: es })}
-                          </span>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">
+                              {comment.profile?.display_name || 'Usuario'}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: es })}
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover/comment:opacity-100"
+                            onClick={() => handleDeleteComment(comment.id)}
+                            disabled={deletingCommentId === comment.id}
+                          >
+                            {deletingCommentId === comment.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
                         </div>
                         <p className="text-sm text-muted-foreground">{comment.content}</p>
                       </div>
