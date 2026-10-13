@@ -13,6 +13,8 @@ const s3 = new S3Client({
 })
 
 const publicBaseUrl = process.env.R2_PUBLIC_URL || process.env.NEXT_PUBLIC_R2_PUBLIC_URL
+const resourceImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+const maxResourceImageSize = 8 * 1024 * 1024
 
 function sanitizeFilename(filename: string) {
   return filename.replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -27,17 +29,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { filename, contentType } = await request.json()
+    const { filename, contentType, fileSize, purpose } = await request.json()
 
-    if (!filename) {
+    if (typeof filename !== 'string' || !filename.trim()) {
       return NextResponse.json({ error: 'Missing filename' }, { status: 400 })
+    }
+
+    if (purpose === 'resource-image' && (
+      !resourceImageTypes.includes(contentType) ||
+      !Number.isInteger(fileSize) ||
+      fileSize < 1 ||
+      fileSize > maxResourceImageSize
+    )) {
+      return NextResponse.json({ error: 'Unsupported image format or size (maximum 8 MB).' }, { status: 400 })
     }
 
     if (!process.env.R2_BUCKET_NAME) {
       return NextResponse.json({ error: 'R2 is not configured' }, { status: 500 })
     }
 
-    const key = `r2/${user.id}/${Date.now()}-${sanitizeFilename(filename)}`
+    const key = `r2/${user.id}/${Date.now()}-${crypto.randomUUID()}-${sanitizeFilename(filename)}`
 
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME,
