@@ -15,6 +15,7 @@ const s3 = new S3Client({
 const publicBaseUrl = process.env.R2_PUBLIC_URL || process.env.NEXT_PUBLIC_R2_PUBLIC_URL
 const resourceImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const maxResourceImageSize = 8 * 1024 * 1024
+const maxResourceFileSize = 50 * 1024 * 1024
 
 function sanitizeFilename(filename: string) {
   return filename.replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -42,6 +43,16 @@ export async function POST(request: NextRequest) {
       fileSize > maxResourceImageSize
     )) {
       return NextResponse.json({ error: 'Unsupported image format or size (maximum 8 MB).' }, { status: 400 })
+    }
+
+    if (purpose === 'resource-file' && (
+      typeof contentType !== 'string' ||
+      contentType.length > 255 ||
+      !Number.isInteger(fileSize) ||
+      fileSize < 1 ||
+      fileSize > maxResourceFileSize
+    )) {
+      return NextResponse.json({ error: 'Unsupported file or size (maximum 50 MB).' }, { status: 400 })
     }
 
     if (!process.env.R2_BUCKET_NAME) {

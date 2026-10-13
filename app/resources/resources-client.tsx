@@ -13,18 +13,20 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Bookmark, Download, ExternalLink, ImagePlus, Link2, Loader2, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { Bookmark, Download, ExternalLink, FileText, ImagePlus, Link2, Loader2, Paperclip, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 
 const typeLabels: Record<ResourceType, string> = { script: 'Script', mlo: 'MLO', vehicle: 'Vehículo', map: 'Mapa', ui: 'UI', tool: 'Herramienta', other: 'Otro' }
 const typeColors: Record<ResourceType, string> = { script: 'bg-primary/10 text-primary', mlo: 'bg-violet-500/10 text-violet-300', vehicle: 'bg-amber-500/10 text-amber-300', map: 'bg-sky-500/10 text-sky-300', ui: 'bg-pink-500/10 text-pink-300', tool: 'bg-orange-500/10 text-orange-300', other: 'bg-muted text-muted-foreground' }
 const statusLabels: Record<ResourceStatus, string> = { pending: 'Pendiente', in_progress: 'En progreso', implemented: 'Implementado' }
 const statusColors: Record<ResourceStatus, string> = { pending: 'bg-blue-500/10 text-blue-400', in_progress: 'bg-amber-500/10 text-amber-300', implemented: 'bg-emerald-500/10 text-emerald-300' }
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
+const MAX_RESOURCE_FILE_SIZE = 50 * 1024 * 1024
 const MAX_IMAGES = 8
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 
 type ResourceWithAttachments = Resource & { resource_attachments?: ResourceAttachment[] }
 type DraftImage = { file: File; previewUrl: string; id: string }
+type DraftResourceFile = { file: File; id: string }
 type ResourceForm = { title: string; description: string; resource_type: ResourceType; status: ResourceStatus; url: string; download_url: string; tags: string; notes: string }
 
 const emptyForm: ResourceForm = { title: '', description: '', resource_type: 'script', status: 'pending', url: '', download_url: '', tags: '', notes: '' }
@@ -65,7 +67,8 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
   const [editing, setEditing] = useState<ResourceWithAttachments | null>(null)
   const [form, setForm] = useState<ResourceForm>(emptyForm)
   const [draftImages, setDraftImages] = useState<DraftImage[]>([])
-  const [removedImageIds, setRemovedImageIds] = useState<string[]>([])
+  const [draftFiles, setDraftFiles] = useState<DraftResourceFile[]>([])
+  const [removedAttachmentIds, setRemovedAttachmentIds] = useState<string[]>([])
   const [bannerId, setBannerId] = useState('')
   const [saving, setSaving] = useState(false)
   const [uploadError, setUploadError] = useState('')
@@ -93,7 +96,8 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     previewUrls.current = []
     setForm(emptyForm)
     setDraftImages([])
-    setRemovedImageIds([])
+    setDraftFiles([])
+    setRemovedAttachmentIds([])
     setBannerId('')
     setEditing(null)
     setUploadError('')
@@ -131,7 +135,9 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
   const addFiles = async (files: FileList | null) => {
     if (!files?.length) return
     setUploadError('')
-    const activeImages = (editing?.resource_attachments ?? []).filter((attachment) => !removedImageIds.includes(attachment.id)).length + draftImages.length
+    const activeImages = (editing?.resource_attachments ?? []).filter((attachment) =>
+      ALLOWED_IMAGE_TYPES.includes(attachment.file_type) && !removedAttachmentIds.includes(attachment.id),
+    ).length + draftImages.length
     const picked = Array.from(files)
     if (activeImages + picked.length > MAX_IMAGES) {
       setUploadError(`Puedes adjuntar hasta ${MAX_IMAGES} imágenes por recurso.`)
@@ -164,14 +170,45 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
   }
 
   const removeExistingImage = (attachment: ResourceAttachment) => {
-    setRemovedImageIds((current) => [...current, attachment.id])
+    setRemovedAttachmentIds((current) => [...current, attachment.id])
     if (bannerId === attachment.id) setBannerId('')
+  }
+
+  const addResourceFiles = (files: FileList | null) => {
+    if (!files?.length) return
+    setUploadError('')
+    const valid: DraftResourceFile[] = []
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_RESOURCE_FILE_SIZE) {
+        setUploadError(`${file.name} supera el límite de 50 MB.`)
+        continue
+      }
+      if (!file.size) {
+        setUploadError(`${file.name} está vacío y no se puede adjuntar.`)
+        continue
+      }
+      if (ALLOWED_IMAGE_TYPES.includes(file.type)) {
+        setUploadError(`${file.name} es una imagen. Añádela en la sección Imágenes para poder elegirla como portada.`)
+        continue
+      }
+      valid.push({ file, id: `new-file:${crypto.randomUUID()}` })
+    }
+    setDraftFiles((current) => [...current, ...valid])
+  }
+
+  const removeDraftFile = (id: string) => {
+    setDraftFiles((current) => current.filter((file) => file.id !== id))
+  }
+
+  const removeExistingFile = (attachment: ResourceAttachment) => {
+    setRemovedAttachmentIds((current) => [...current, attachment.id])
   }
 
   const saveResource = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!form.title.trim()) return setUploadError('Añade un título.')
-    const existingImages = (editing?.resource_attachments ?? []).filter((attachment) => !removedImageIds.includes(attachment.id))
+    const existingAttachments = (editing?.resource_attachments ?? []).filter((attachment) => !removedAttachmentIds.includes(attachment.id))
+    const existingImages = existingAttachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
     const imageCount = existingImages.length + draftImages.length
     if (imageCount && !bannerId) return setUploadError('Selecciona una imagen de portada antes de guardar.')
     if (imageCount > MAX_IMAGES) return setUploadError(`Puedes adjuntar hasta ${MAX_IMAGES} imágenes por recurso.`)
@@ -207,31 +244,36 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
 
       const uploadedAttachments: Omit<ResourceAttachment, 'id' | 'created_at'>[] = []
       const uploadedFilePaths = new Map<string, string>()
-      for (const [index, image] of draftImages.entries()) {
+      const newAttachments = [
+        ...draftImages.map((image) => ({ ...image, purpose: 'resource-image' as const })),
+        ...draftFiles.map((file) => ({ ...file, purpose: 'resource-file' as const })),
+      ]
+      for (const [index, attachment] of newAttachments.entries()) {
+        const contentType = attachment.file.type || 'application/octet-stream'
         const signResponse = await fetch('/api/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: image.file.name, contentType: image.file.type, fileSize: image.file.size, purpose: 'resource-image' }),
+          body: JSON.stringify({ filename: attachment.file.name, contentType, fileSize: attachment.file.size, purpose: attachment.purpose }),
         })
         const signed = await signResponse.json()
-        if (!signResponse.ok) throw new Error(signed.error || `No se pudo preparar la carga de ${image.file.name}.`)
+        if (!signResponse.ok) throw new Error(signed.error || `No se pudo preparar la carga de ${attachment.file.name}.`)
 
         uploadedKeys.push(signed.key)
-        uploadedFilePaths.set(image.id, signed.key)
+        uploadedFilePaths.set(attachment.id, signed.key)
         const uploadResponse = await fetch(signed.uploadUrl, {
           method: 'PUT',
-          headers: { 'Content-Type': image.file.type },
-          body: image.file,
+          headers: { 'Content-Type': contentType },
+          body: attachment.file,
         })
-        if (!uploadResponse.ok) throw new Error(`No se pudo subir ${image.file.name}. Inténtalo de nuevo.`)
+        if (!uploadResponse.ok) throw new Error(`No se pudo subir ${attachment.file.name}. Inténtalo de nuevo.`)
         uploadedAttachments.push({
           resource_id: resourceId,
           user_id: user.id,
-          file_name: image.file.name,
+          file_name: attachment.file.name,
           file_path: signed.key,
-          file_type: image.file.type,
-          file_size: image.file.size,
-          position: existingImages.length + index,
+          file_type: contentType,
+          file_size: attachment.file.size,
+          position: existingAttachments.length + index,
           is_banner: false,
         })
       }
@@ -250,17 +292,17 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
             .eq('resource_id', resourceId).eq('user_id', user.id)
           if (error) throw error
         }
-        for (const [position, attachment] of existingImages.entries()) {
+        for (const [position, attachment] of existingAttachments.entries()) {
           const { error } = await supabase.from('resource_attachments')
             .update({ position, is_banner: false })
             .eq('id', attachment.id).eq('resource_id', resourceId).eq('user_id', user.id)
           if (error) throw error
         }
 
-        if (removedImageIds.length) {
-          const removed = (editing.resource_attachments ?? []).filter((attachment) => removedImageIds.includes(attachment.id))
+        if (removedAttachmentIds.length) {
+          const removed = (editing.resource_attachments ?? []).filter((attachment) => removedAttachmentIds.includes(attachment.id))
           const { error } = await supabase.from('resource_attachments').delete()
-            .in('id', removedImageIds).eq('resource_id', resourceId).eq('user_id', user.id)
+            .in('id', removedAttachmentIds).eq('resource_id', resourceId).eq('user_id', user.id)
           if (error) throw error
           for (const attachment of removed) {
             if (!await deleteStoredFile(attachment.file_path)) toast.error(`No se pudo limpiar el archivo ${attachment.file_name}.`)
@@ -306,19 +348,19 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
         const { error: rollbackError } = await supabase.from('resource_attachments').delete().in('file_path', uploadedKeys)
         if (rollbackError) {
           canCleanUploadedFiles = false
-          toast.error('No se pudieron revertir los datos de las imágenes. Los archivos se conservarán para evitar enlaces rotos.')
+          toast.error('No se pudieron revertir los datos de los archivos. Se conservarán para evitar enlaces rotos.')
         }
       }
       if (createdResourceId) {
         const { error: rollbackError } = await supabase.from('resources').delete().eq('id', createdResourceId)
         if (rollbackError) {
           canCleanUploadedFiles = false
-          toast.error('No se pudo revertir el recurso nuevo; las imágenes se conservarán para evitar enlaces rotos.')
+          toast.error('No se pudo revertir el recurso nuevo; los archivos se conservarán para evitar enlaces rotos.')
         }
       }
       if (canCleanUploadedFiles) {
         for (const key of uploadedKeys) {
-          if (!await deleteStoredFile(key)) toast.error('No se pudo limpiar una imagen subida. Contacta con soporte.')
+          if (!await deleteStoredFile(key)) toast.error('No se pudo limpiar un archivo subido. Contacta con soporte.')
         }
       }
     } finally {
@@ -334,10 +376,12 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     setResources((current) => current.filter((item) => item.id !== resource.id))
     const cleanupResults = await Promise.all((resource.resource_attachments ?? []).map((attachment) => deleteStoredFile(attachment.file_path)))
     toast.success('Recurso eliminado')
-    if (cleanupResults.some((success) => !success)) toast.error('No se pudieron limpiar todas las imágenes del recurso.')
+    if (cleanupResults.some((success) => !success)) toast.error('No se pudieron limpiar todos los archivos del recurso.')
   }
 
-  const activeAttachments = (editing?.resource_attachments ?? []).filter((attachment) => !removedImageIds.includes(attachment.id))
+  const activeAttachments = (editing?.resource_attachments ?? []).filter((attachment) => !removedAttachmentIds.includes(attachment.id))
+  const activeImages = activeAttachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
+  const activeFiles = activeAttachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
 
   return <div className="min-h-screen bg-background"><Header profile={profile} /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
     <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
@@ -386,9 +430,9 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
                   <span className="sr-only" aria-live="polite">{draggingImages ? 'Suelta las imágenes para adjuntarlas.' : ''}</span>
                   <input id="resource-images" type="file" accept={ALLOWED_IMAGE_TYPES.join(',')} multiple className="sr-only" onChange={(event) => { void addFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
                 </label>
-                {(activeAttachments.length + draftImages.length > 0) && <p className="text-xs text-muted-foreground">Selecciona una portada. El resto aparecerá como miniaturas enlazadas.</p>}
+                {(activeImages.length + draftImages.length > 0) && <p className="text-xs text-muted-foreground">Selecciona una portada. El resto aparecerá como miniaturas enlazadas.</p>}
                 <div className="grid grid-cols-3 gap-2">
-                  {activeAttachments.map((attachment) => (
+                  {activeImages.map((attachment) => (
                     <div key={attachment.id} className={`relative overflow-hidden rounded-md border ${bannerId === attachment.id ? 'border-primary ring-1 ring-primary' : 'border-border'}`}>
                       <button type="button" className="block w-full text-left" onClick={() => setBannerId(attachment.id)} aria-label={`Usar ${attachment.file_name} como portada`} aria-pressed={bannerId === attachment.id}>
                         <img src={imageUrl(attachment.file_path)} alt={attachment.file_name} className="aspect-[4/3] w-full object-cover" />
@@ -408,6 +452,31 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
                   ))}
                 </div>
               </section>
+              <section className="flex flex-col gap-2" aria-labelledby="resource-files-title">
+                <div><Label id="resource-files-title">Archivos adjuntos</Label><p className="mt-1 text-xs text-muted-foreground">Cualquier tipo de archivo, hasta 50 MB cada uno. Se guardan en Cloudflare R2.</p></div>
+                <label htmlFor="resource-files" className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
+                  <Paperclip className="size-4" />Selecciona archivos para subir a R2
+                  <input id="resource-files" type="file" multiple className="sr-only" onChange={(event) => { addResourceFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
+                </label>
+                {(activeFiles.length > 0 || draftFiles.length > 0) && <ul className="flex flex-col gap-2">
+                  {activeFiles.map((attachment) => (
+                    <li key={attachment.id} className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
+                      <a href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-2 text-primary hover:underline">
+                        <FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span>
+                      </a>
+                      <span className="shrink-0 text-xs text-muted-foreground">{(attachment.file_size / (1024 * 1024)).toFixed(1)} MB</span>
+                      <Button type="button" variant="ghost" size="icon-sm" aria-label={`Quitar ${attachment.file_name}`} onClick={() => removeExistingFile(attachment)}><X className="size-3.5" /></Button>
+                    </li>
+                  ))}
+                  {draftFiles.map(({ file, id }) => (
+                    <li key={id} className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
+                      <span className="flex min-w-0 items-center gap-2"><FileText className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{file.name}</span></span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{(file.size / (1024 * 1024)).toFixed(1)} MB</span>
+                      <Button type="button" variant="ghost" size="icon-sm" aria-label={`Quitar ${file.name}`} onClick={() => removeDraftFile(id)}><X className="size-3.5" /></Button>
+                    </li>
+                  ))}
+                </ul>}
+              </section>
               {uploadError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{uploadError}</p>}
             </div>
             <DialogFooter className="mt-5"><Button type="button" variant="outline" onClick={() => onDialogOpenChange(false)} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{saving ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar recurso'}</Button></DialogFooter>
@@ -418,13 +487,16 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     <div className="mb-6 flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar recursos, etiquetas..." /></div><Select value={type} onValueChange={(value) => setType(value as typeof type)}><SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
     {filtered.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{filtered.map((item) => {
       const attachments = (item.resource_attachments ?? []).slice().sort((a, b) => a.position - b.position)
-      const banner = attachments.find((attachment) => attachment.is_banner)
-      const thumbnails = attachments.filter((attachment) => attachment.id !== banner?.id)
+      const imageAttachments = attachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
+      const files = attachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
+      const banner = imageAttachments.find((attachment) => attachment.is_banner)
+      const thumbnails = imageAttachments.filter((attachment) => attachment.id !== banner?.id)
       return <Card key={item.id} className="group overflow-hidden border-border/60 bg-card/70">
         {banner && <a href={imageUrl(banner.file_path)} target="_blank" rel="noreferrer" aria-label={`Abrir portada de ${item.title}`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} className="aspect-[16/8] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></a>}
         <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div><CardTitle className="mt-3 text-lg">{item.title}</CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
         <CardContent className="flex flex-col gap-4">
           {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" title={`Abrir ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} className="size-14 object-cover transition-opacity hover:opacity-80" /></a>)}</div>}
+          {files.length > 0 && <div className="flex flex-col gap-2">{files.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><Download className="ml-auto size-3.5 shrink-0" /></a>)}</div>}
           <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="text-xs">#{tag}</Badge>)}</div>
           <div className="flex items-center gap-2 border-t border-border/60 pt-3">{item.url && <Button asChild variant="outline" size="sm"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}{item.download_url && <Button asChild size="sm"><a href={item.download_url} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a></Button>}{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}</div>
         </CardContent>
