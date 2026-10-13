@@ -1,0 +1,1223 @@
+diff --git a/app/dashboard/dashboard-client.tsx b/app/dashboard/dashboard-client.tsx
+index 1ac8fde..a6f8851 100644
+--- a/app/dashboard/dashboard-client.tsx
++++ b/app/dashboard/dashboard-client.tsx
+@@ -1,10 +1,10 @@
+ 'use client'
+ 
+-import { useState, useCallback } from 'react'
++import { useState, useCallback, useMemo, useEffect } from 'react'
+ import { createClient } from '@/lib/supabase/client'
+-import type { Profile, Category, Task, TaskWithRelations, TaskStatus } from '@/lib/types'
++import type { Profile, Category, TaskWithRelations, TaskStatus, TaskType } from '@/lib/types'
+ import { Header } from '@/components/header'
+-import { TaskCard } from '@/components/task-card'
++import { TaskCard, authorName } from '@/components/task-card'
+ import { TaskDialog } from '@/components/task-dialog'
+ import { TaskDetail } from '@/components/task-detail'
+ import { CategoryDialog } from '@/components/category-dialog'
+@@ -19,65 +19,55 @@ import {
+   DropdownMenuTrigger,
+ } from '@/components/ui/dropdown-menu'
+ import {
+-  Plus,
+-  Search,
+-  Tag,
+-  MoreHorizontal,
+-  Pencil,
+-  Trash2,
+-  CheckCircle2,
+-  Circle,
+-  Clock,
+-  Loader2,
+-  Activity,
+-  Flame,
+-  GitBranch,
+-  ServerCog,
+-  TerminalSquare,
+-  UploadCloud,
+-} from 'lucide-react'
++  Select,
++  SelectContent,
++  SelectItem,
++  SelectTrigger,
++  SelectValue,
++} from '@/components/ui/select'
++import { Plus, Search, Tag, MoreHorizontal, Pencil, Trash2, Loader2, Users, X } from 'lucide-react'
++import { columns, typeConfig, typeOrder } from '@/lib/task-config'
+ 
+ interface DashboardClientProps {
+   profile: Profile | null
+   initialCategories: Category[]
+   initialTasks: TaskWithRelations[]
++  initialProfiles: Profile[]
+ }
+ 
+-type FilterStatus = 'all' | TaskStatus
++type FilterType = 'all' | TaskType
+ 
+-export function DashboardClient({ profile, initialCategories, initialTasks }: DashboardClientProps) {
++export function DashboardClient({ profile, initialCategories, initialTasks, initialProfiles }: DashboardClientProps) {
+   const [categories, setCategories] = useState(initialCategories)
+   const [tasks, setTasks] = useState(initialTasks)
++  const [profiles, setProfiles] = useState(initialProfiles)
+   const [search, setSearch] = useState('')
+-  const [filterStatus, setFilterStatus] = useState<FilterStatus>('all')
++  const [filterType, setFilterType] = useState<FilterType>('all')
+   const [filterCategory, setFilterCategory] = useState<string | null>(null)
+-  
++  const [filterAuthor, setFilterAuthor] = useState<string>('all')
++
+   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
++  const [newTaskType, setNewTaskType] = useState<TaskType>('task')
++  const [newTaskStatus, setNewTaskStatus] = useState<TaskStatus>('pending')
+   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false)
+   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
+-  
++
+   const [selectedTask, setSelectedTask] = useState<TaskWithRelations | null>(null)
+   const [taskDetailOpen, setTaskDetailOpen] = useState(false)
+-  
++
++  const [draggingId, setDraggingId] = useState<string | null>(null)
++  const [overColumn, setOverColumn] = useState<TaskStatus | null>(null)
++
+   const [loading, setLoading] = useState(false)
+-  
+-  const supabase = createClient()
++
++  const supabase = useMemo(() => createClient(), [])
+ 
+   const fetchData = useCallback(async () => {
+     setLoading(true)
+     try {
+-      const { data: { user } } = await supabase.auth.getUser()
+-      if (!user) {
+-        setLoading(false)
+-        return
+-      }
+-
+-      const [categoriesRes, tasksRes] = await Promise.all([
+-        supabase
+-          .from('categories')
+-          .select('*')
+-          .eq('user_id', user.id)
+-          .order('created_at', { ascending: true }),
++      // Workspace compartido: sin filtrar por user_id. Quién puede ver qué lo decide RLS en Supabase.
++      const [categoriesRes, tasksRes, profilesRes] = await Promise.all([
++        supabase.from('categories').select('*').order('created_at', { ascending: true }),
+         supabase
+           .from('tasks')
+           .select(`
+@@ -87,27 +77,37 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
+             comments(*),
+             attachments(*)
+           `)
+-          .eq('user_id', user.id)
+           .order('created_at', { ascending: false }),
++        supabase.from('profiles').select('*'),
+       ])
+ 
+       if (categoriesRes.data) setCategories(categoriesRes.data)
++      if (profilesRes.data) setProfiles(profilesRes.data)
+       if (tasksRes.data) {
+-        setTasks(tasksRes.data as TaskWithRelations[])
+-        if (selectedTask) {
+-          const updated = tasksRes.data.find((t) => t.id === selectedTask.id)
+-          if (updated) setSelectedTask(updated as TaskWithRelations)
+-        }
++        const fresh = tasksRes.data as TaskWithRelations[]
++        setTasks(fresh)
++        setSelectedTask((current) => (current ? fresh.find((t) => t.id === current.id) ?? current : current))
+       }
+     } catch (err) {
+       console.error('Error fetching data:', err)
+     } finally {
+       setLoading(false)
+     }
+-  }, [supabase, selectedTask])
++  }, [supabase])
++
++  // Refresco automático para ver lo que crean los demás sin recargar la página
++  useEffect(() => {
++    const interval = setInterval(() => {
++      if (document.visibilityState === 'visible') fetchData()
++    }, 20000)
++    return () => clearInterval(interval)
++  }, [fetchData])
++
++  const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles])
+ 
+   const handleDeleteCategory = async (category: Category) => {
+     await supabase.from('categories').delete().eq('id', category.id)
++    if (filterCategory === category.id) setFilterCategory(null)
+     fetchData()
+   }
+ 
+@@ -116,191 +116,171 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
+     setTaskDetailOpen(true)
+   }
+ 
+-  // Filter tasks
++  const openNewTask = (type: TaskType, status: TaskStatus = 'pending') => {
++    setNewTaskType(type)
++    setNewTaskStatus(status)
++    setTaskDialogOpen(true)
++  }
++
++  // Mover una tarjeta entre columnas (arrastrar y soltar)
++  const moveTask = async (taskId: string, status: TaskStatus) => {
++    const task = tasks.find((t) => t.id === taskId)
++    if (!task || task.status === status) return
++    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status } : t)))
++    const { error } = await supabase
++      .from('tasks')
++      .update({ status, updated_at: new Date().toISOString() })
++      .eq('id', taskId)
++    if (error) {
++      console.error('Error moving task:', error)
++      fetchData()
++    }
++  }
++
++  // Filtros
++  const searchLower = search.toLowerCase()
+   const filteredTasks = tasks.filter((task) => {
+-    const matchesSearch = task.title.toLowerCase().includes(search.toLowerCase()) ||
+-      task.description?.toLowerCase().includes(search.toLowerCase())
+-    const matchesStatus = filterStatus === 'all' || task.status === filterStatus
++    const matchesSearch =
++      !searchLower ||
++      task.title.toLowerCase().includes(searchLower) ||
++      task.description?.toLowerCase().includes(searchLower)
++    const matchesType = filterType === 'all' || (task.type ?? 'task') === filterType
+     const matchesCategory = !filterCategory || task.category_id === filterCategory
+-    return matchesSearch && matchesStatus && matchesCategory
++    const matchesAuthor = filterAuthor === 'all' || task.user_id === filterAuthor
++    return matchesSearch && matchesType && matchesCategory && matchesAuthor
+   })
+ 
+-  const statusCounts = {
+-    pending: tasks.filter((t) => t.status === 'pending').length,
+-    in_progress: tasks.filter((t) => t.status === 'in_progress').length,
+-    completed: tasks.filter((t) => t.status === 'completed').length,
++  const typeCounts = typeOrder.reduce(
++    (acc, t) => ({ ...acc, [t]: tasks.filter((task) => (task.type ?? 'task') === t && task.status !== 'completed').length }),
++    {} as Record<TaskType, number>
++  )
++
++  const authors = profiles.filter((p) => tasks.some((t) => t.user_id === p.id))
++  const hasActiveFilters = filterType !== 'all' || filterCategory !== null || filterAuthor !== 'all' || search !== ''
++
++  const clearFilters = () => {
++    setFilterType('all')
++    setFilterCategory(null)
++    setFilterAuthor('all')
++    setSearch('')
+   }
+-  const highPriorityCount = tasks.filter((t) => t.priority === 'high').length
+-  const attachmentsCount = tasks.reduce((count, task) => count + (task.attachments?.length || 0), 0)
+ 
+   return (
+     <div className="min-h-screen bg-background">
+       <Header profile={profile} />
+-      
+-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+-        <section className="mb-6 overflow-hidden rounded-lg border border-border/60 bg-card/40">
+-          <div className="grid gap-0 lg:grid-cols-[1.4fr_0.9fr]">
+-            <div className="relative p-5 sm:p-6">
+-              <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(52,211,153,0.14),transparent_42%),linear-gradient(rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.045)_1px,transparent_1px)] bg-[length:auto,28px_28px,28px_28px]" />
+-              <div className="relative">
+-                <div className="mb-5 flex flex-wrap items-center gap-2">
+-                  <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+-                    <ServerCog className="mr-1 h-3 w-3" />
+-                    Workspace FiveM
+-                  </Badge>
+-                  <Badge variant="outline" className="border-amber-500/25 bg-amber-500/10 text-amber-300">
+-                    <Activity className="mr-1 h-3 w-3" />
+-                    {statusCounts.in_progress} en progreso
+-                  </Badge>
+-                </div>
+-                <div className="max-w-3xl space-y-3">
+-                  <h1 className="text-2xl font-semibold tracking-normal text-balance sm:text-3xl">
+-                    Panel de desarrollo para scripts, fixes y releases de FiveM.
+-                  </h1>
+-                  <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+-                    Prioriza bugs, organiza recursos por categoria y adjunta builds pesadas sin pasar por el limite de Vercel.
+-                  </p>
+-                </div>
+-                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+-                  <div className="rounded-md border border-border/60 bg-background/45 p-3">
+-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+-                      <TerminalSquare className="h-3.5 w-3.5 text-primary" />
+-                      Backlog total
+-                    </div>
+-                    <p className="mt-2 text-2xl font-semibold">{tasks.length}</p>
+-                  </div>
+-                  <div className="rounded-md border border-border/60 bg-background/45 p-3">
+-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+-                      <Flame className="h-3.5 w-3.5 text-red-300" />
+-                      Alta prioridad
+-                    </div>
+-                    <p className="mt-2 text-2xl font-semibold">{highPriorityCount}</p>
+-                  </div>
+-                  <div className="rounded-md border border-border/60 bg-background/45 p-3">
+-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+-                      <UploadCloud className="h-3.5 w-3.5 text-sky-300" />
+-                      Archivos
+-                    </div>
+-                    <p className="mt-2 text-2xl font-semibold">{attachmentsCount}</p>
+-                  </div>
+-                </div>
+-              </div>
+-            </div>
+-            <div className="border-t border-border/60 bg-background/30 p-5 lg:border-l lg:border-t-0">
+-              <div className="mb-4 flex items-center justify-between">
+-                <div>
+-                  <p className="text-sm font-medium">Estado del sprint</p>
+-                  <p className="text-xs text-muted-foreground">Vista rapida del pipeline</p>
+-                </div>
+-                <GitBranch className="h-4 w-4 text-primary" />
+-              </div>
+-              <div className="space-y-3">
+-                {[
+-                  { label: 'Pendientes', value: statusCounts.pending, color: 'bg-blue-400' },
+-                  { label: 'En progreso', value: statusCounts.in_progress, color: 'bg-amber-400' },
+-                  { label: 'Completadas', value: statusCounts.completed, color: 'bg-emerald-400' },
+-                ].map((item) => {
+-                  const width = tasks.length > 0 ? Math.max(8, Math.round((item.value / tasks.length) * 100)) : 0
+-                  return (
+-                    <div key={item.label} className="space-y-2">
+-                      <div className="flex items-center justify-between text-xs">
+-                        <span className="text-muted-foreground">{item.label}</span>
+-                        <span className="font-medium">{item.value}</span>
+-                      </div>
+-                      <div className="h-2 overflow-hidden rounded-full bg-muted/60">
+-                        <div className={`h-full rounded-full ${item.color}`} style={{ width: `${width}%` }} />
+-                      </div>
+-                    </div>
+-                  )
+-                })}
+-              </div>
++
++      <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
++        {/* Título + acciones rápidas */}
++        <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
++          <div>
++            <div className="mb-1 flex items-center gap-2">
++              <h1 className="text-2xl font-semibold">Tablero del equipo</h1>
++              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
++                <Users className="mr-1 h-3 w-3" />
++                {profiles.length} {profiles.length === 1 ? 'miembro' : 'miembros'}
++              </Badge>
++              {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+             </div>
++            <p className="text-sm text-muted-foreground">
++              Todos ven las mismas tareas. Arrastra las tarjetas entre columnas para cambiar su estado.
++            </p>
++          </div>
++          <div className="flex flex-wrap gap-2">
++            {typeOrder.map((t) => {
++              const cfg = typeConfig[t]
++              const Icon = cfg.icon
++              return (
++                <Button
++                  key={t}
++                  variant="outline"
++                  size="sm"
++                  className={`${cfg.className} hover:brightness-125`}
++                  onClick={() => openNewTask(t)}
++                >
++                  <Icon className="mr-1.5 h-4 w-4" />
++                  Nuevo {cfg.label.toLowerCase()}
++                </Button>
++              )
++            })}
+           </div>
+-        </section>
++        </div>
+ 
+-        {/* Stats */}
+-        <div className="mb-6 grid gap-3 sm:grid-cols-3">
+-          <button
+-            onClick={() => setFilterStatus(filterStatus === 'pending' ? 'all' : 'pending')}
+-            className={`flex min-h-24 items-center gap-3 rounded-lg border p-4 text-left transition-all hover:-translate-y-0.5 ${
+-              filterStatus === 'pending' ? 'border-blue-500/50 bg-blue-500/10' : 'border-border/60 bg-card/45 hover:bg-card/70'
+-            }`}
+-          >
+-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/10">
+-              <Circle className="h-5 w-5 text-blue-400" />
+-            </div>
+-            <div className="text-left">
+-              <p className="text-2xl font-bold">{statusCounts.pending}</p>
+-              <p className="text-sm text-muted-foreground">Por revisar</p>
+-            </div>
+-          </button>
+-          <button
+-            onClick={() => setFilterStatus(filterStatus === 'in_progress' ? 'all' : 'in_progress')}
+-            className={`flex min-h-24 items-center gap-3 rounded-lg border p-4 text-left transition-all hover:-translate-y-0.5 ${
+-              filterStatus === 'in_progress' ? 'border-amber-500/50 bg-amber-500/10' : 'border-border/60 bg-card/45 hover:bg-card/70'
+-            }`}
+-          >
+-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10">
+-              <Clock className="h-5 w-5 text-amber-400" />
+-            </div>
+-            <div className="text-left">
+-              <p className="text-2xl font-bold">{statusCounts.in_progress}</p>
+-              <p className="text-sm text-muted-foreground">En Progreso</p>
+-            </div>
+-          </button>
+-          <button
+-            onClick={() => setFilterStatus(filterStatus === 'completed' ? 'all' : 'completed')}
+-            className={`flex min-h-24 items-center gap-3 rounded-lg border p-4 text-left transition-all hover:-translate-y-0.5 ${
+-              filterStatus === 'completed' ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-border/60 bg-card/45 hover:bg-card/70'
+-            }`}
+-          >
+-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10">
+-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+-            </div>
+-            <div className="text-left">
+-              <p className="text-2xl font-bold">{statusCounts.completed}</p>
+-              <p className="text-sm text-muted-foreground">Completadas</p>
+-            </div>
+-          </button>
++        {/* Contadores por tipo (clicables = filtro) */}
++        <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
++          {typeOrder.map((t) => {
++            const cfg = typeConfig[t]
++            const Icon = cfg.icon
++            const active = filterType === t
++            return (
++              <button
++                key={t}
++                onClick={() => setFilterType(active ? 'all' : t)}
++                className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:-translate-y-0.5 ${
++                  active ? `${cfg.className} ring-1 ring-current` : 'border-border/60 bg-card/45 hover:bg-card/70'
++                }`}
++              >
++                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${cfg.className}`}>
++                  <Icon className="h-5 w-5" />
++                </div>
++                <div>
++                  <p className="text-2xl font-bold leading-none">{typeCounts[t]}</p>
++                  <p className="mt-1 text-xs text-muted-foreground">{cfg.plural} abiert{t === 'idea' || t === 'improvement' ? 'as' : 'os'}</p>
++                </div>
++              </button>
++            )
++          })}
+         </div>
+ 
+-        {/* Toolbar */}
+-        <div className="mb-5 flex flex-col gap-4 rounded-lg border border-border/60 bg-card/35 p-3 sm:flex-row sm:items-center sm:justify-between">
+-          <div className="flex flex-1 items-center gap-3">
+-            <div className="relative flex-1 max-w-md">
++        {/* Barra de filtros */}
++        <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border/60 bg-card/35 p-3 sm:flex-row sm:items-center sm:justify-between">
++          <div className="flex flex-1 flex-wrap items-center gap-3">
++            <div className="relative min-w-[200px] max-w-md flex-1">
+               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+               <Input
+-                placeholder="Buscar tareas..."
++                placeholder="Buscar..."
+                 value={search}
+                 onChange={(e) => setSearch(e.target.value)}
+                 className="pl-9"
+               />
+             </div>
+-            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+-          </div>
+-          <div className="flex items-center gap-2">
+-            <Button
+-              variant="outline"
+-              size="sm"
+-              onClick={() => {
+-                setEditingCategory(null)
+-                setCategoryDialogOpen(true)
+-              }}
+-            >
+-              <Tag className="mr-2 h-4 w-4" />
+-              Categoria
+-            </Button>
+-            <Button size="sm" onClick={() => setTaskDialogOpen(true)}>
+-              <Plus className="mr-2 h-4 w-4" />
+-              Nueva Tarea
+-            </Button>
++            <Select value={filterAuthor} onValueChange={setFilterAuthor}>
++              <SelectTrigger className="w-[190px]">
++                <SelectValue placeholder="Todos los miembros" />
++              </SelectTrigger>
++              <SelectContent>
++                <SelectItem value="all">Todos los miembros</SelectItem>
++                {authors.map((p) => (
++                  <SelectItem key={p.id} value={p.id}>
++                    {authorName(p)}
++                    {p.id === profile?.id ? ' (tú)' : ''}
++                  </SelectItem>
++                ))}
++              </SelectContent>
++            </Select>
++            {hasActiveFilters && (
++              <Button variant="ghost" size="sm" onClick={clearFilters}>
++                <X className="mr-1 h-4 w-4" />
++                Limpiar
++              </Button>
++            )}
+           </div>
++          <Button
++            variant="outline"
++            size="sm"
++            onClick={() => {
++              setEditingCategory(null)
++              setCategoryDialogOpen(true)
++            }}
++          >
++            <Tag className="mr-2 h-4 w-4" />
++            Categoria
++          </Button>
+         </div>
+ 
+-        {/* Categories filter */}
++        {/* Filtro por categorías */}
+         {categories.length > 0 && (
+-          <div className="mb-6 flex flex-wrap items-center gap-2">
+-            <span className="text-sm text-muted-foreground">Filtrar por:</span>
++          <div className="mb-5 flex flex-wrap items-center gap-2">
++            <span className="text-sm text-muted-foreground">Categorías:</span>
+             <Badge
+               variant={filterCategory === null ? 'default' : 'outline'}
+               className="cursor-pointer"
+@@ -349,42 +329,92 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
+           </div>
+         )}
+ 
+-        {/* Tasks grid */}
+-        {filteredTasks.length > 0 ? (
+-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+-            {filteredTasks.map((task) => (
+-              <TaskCard key={task.id} task={task} onClick={() => handleTaskClick(task)} />
+-            ))}
+-          </div>
+-        ) : (
+-          <div className="flex flex-col items-center justify-center py-16 text-center">
+-            <div className="mb-4 rounded-full bg-muted/50 p-4">
+-              <CheckCircle2 className="h-8 w-8 text-muted-foreground" />
+-            </div>
+-            <h3 className="mb-1 text-lg font-medium">
+-              {tasks.length === 0 ? 'No hay tareas' : 'Sin resultados'}
+-            </h3>
+-            <p className="mb-4 text-sm text-muted-foreground">
+-              {tasks.length === 0
+-                ? 'Crea tu primera tarea para empezar'
+-                : 'Prueba con otros filtros o busqueda'}
+-            </p>
+-            {tasks.length === 0 && (
+-              <Button onClick={() => setTaskDialogOpen(true)}>
+-                <Plus className="mr-2 h-4 w-4" />
+-                Nueva Tarea
+-              </Button>
+-            )}
+-          </div>
+-        )}
++        {/* Tablero Kanban */}
++        <div className="grid items-start gap-4 lg:grid-cols-3">
++          {columns.map((col) => {
++            const colTasks = filteredTasks.filter((t) => t.status === col.status)
++            const ColIcon = col.icon
++            const isOver = overColumn === col.status && draggingId !== null
++            return (
++              <section
++                key={col.status}
++                onDragOver={(e) => {
++                  e.preventDefault()
++                  if (overColumn !== col.status) setOverColumn(col.status)
++                }}
++                onDragLeave={(e) => {
++                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverColumn(null)
++                }}
++                onDrop={(e) => {
++                  e.preventDefault()
++                  const id = e.dataTransfer.getData('text/plain') || draggingId
++                  setOverColumn(null)
++                  setDraggingId(null)
++                  if (id) moveTask(id, col.status)
++                }}
++                className={`flex min-h-[320px] flex-col rounded-xl border bg-card/25 p-3 transition-all ${
++                  isOver ? `border-transparent ring-2 ${col.ring} bg-card/50` : 'border-border/60'
++                }`}
++              >
++                <header className="mb-3 flex items-center justify-between px-1">
++                  <div className="flex items-center gap-2">
++                    <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
++                    <ColIcon className={`h-4 w-4 ${col.text}`} />
++                    <h2 className="text-sm font-semibold">{col.label}</h2>
++                    <span className="rounded-full bg-muted/60 px-2 py-0.5 text-xs text-muted-foreground">
++                      {colTasks.length}
++                    </span>
++                  </div>
++                  <Button
++                    variant="ghost"
++                    size="icon"
++                    className="h-7 w-7"
++                    onClick={() => openNewTask(filterType === 'all' ? 'task' : filterType, col.status)}
++                    title={`Añadir en ${col.label}`}
++                  >
++                    <Plus className="h-4 w-4" />
++                  </Button>
++                </header>
++
++                <div className="flex flex-1 flex-col gap-3">
++                  {colTasks.map((task) => (
++                    <TaskCard
++                      key={task.id}
++                      task={task}
++                      author={profileById.get(task.user_id)}
++                      onClick={() => handleTaskClick(task)}
++                      draggable
++                      dragging={draggingId === task.id}
++                      onDragStart={(e) => {
++                        e.dataTransfer.setData('text/plain', task.id)
++                        e.dataTransfer.effectAllowed = 'move'
++                        setDraggingId(task.id)
++                      }}
++                      onDragEnd={() => {
++                        setDraggingId(null)
++                        setOverColumn(null)
++                      }}
++                    />
++                  ))}
++                  {colTasks.length === 0 && (
++                    <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 py-10 text-center text-xs text-muted-foreground">
++                      {tasks.length === 0 ? 'Aún no hay nada. ¡Crea el primer bug o idea!' : 'Nada por aquí'}
++                    </div>
++                  )}
++                </div>
++              </section>
++            )
++          })}
++        </div>
+       </main>
+ 
+-      {/* Dialogs */}
+       <TaskDialog
+         open={taskDialogOpen}
+         onOpenChange={setTaskDialogOpen}
+         categories={categories}
+         onSuccess={fetchData}
++        defaultType={newTaskType}
++        defaultStatus={newTaskStatus}
+       />
+ 
+       <CategoryDialog
+@@ -399,6 +429,7 @@ export function DashboardClient({ profile, initialCategories, initialTasks }: Da
+         open={taskDetailOpen}
+         onOpenChange={setTaskDetailOpen}
+         categories={categories}
++        profiles={profiles}
+         onUpdate={fetchData}
+         onDelete={fetchData}
+       />
+diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
+index fc40387..30c89c0 100644
+--- a/app/dashboard/page.tsx
++++ b/app/dashboard/page.tsx
+@@ -17,14 +17,13 @@ export default async function DashboardPage() {
+     .eq('id', user.id)
+     .single()
+ 
+-  // Fetch categories
++  // Workspace compartido: se cargan las categorías, tareas y perfiles de TODO el equipo
++  // (el acceso real lo controlan las políticas RLS de Supabase, ver supabase/shared-workspace.sql)
+   const { data: categories } = await supabase
+     .from('categories')
+     .select('*')
+-    .eq('user_id', user.id)
+     .order('created_at', { ascending: true })
+ 
+-  // Fetch tasks with relations
+   const { data: tasks } = await supabase
+     .from('tasks')
+     .select(`
+@@ -34,14 +33,18 @@ export default async function DashboardPage() {
+       comments(*),
+       attachments(*)
+     `)
+-    .eq('user_id', user.id)
+     .order('created_at', { ascending: false })
+ 
++  const { data: profiles } = await supabase
++    .from('profiles')
++    .select('*')
++
+   return (
+     <DashboardClient
+       profile={profile}
+       initialCategories={categories || []}
+       initialTasks={tasks || []}
++      initialProfiles={profiles || []}
+     />
+   )
+ }
+diff --git a/components/task-card.tsx b/components/task-card.tsx
+index 476681d..f8bac89 100644
+--- a/components/task-card.tsx
++++ b/components/task-card.tsx
+@@ -1,31 +1,36 @@
+ 'use client'
+ 
+-import type { Task } from '@/lib/types'
+-import { Card, CardContent, CardHeader } from '@/components/ui/card'
++import type { Task, Profile } from '@/lib/types'
+ import { Badge } from '@/components/ui/badge'
+-import { CheckCircle2, Circle, Clock, AlertTriangle, MessageSquare, Paperclip, CheckSquare, ArrowUpRight } from 'lucide-react'
++import { Avatar, AvatarFallback } from '@/components/ui/avatar'
++import { getType } from '@/lib/task-config'
++import { MessageSquare, Paperclip, CheckSquare, Flame, ChevronUp, Minus, ChevronDown } from 'lucide-react'
+ 
+ interface TaskCardProps {
+   task: Task
++  author?: Profile | null
+   onClick: () => void
++  draggable?: boolean
++  dragging?: boolean
++  onDragStart?: (e: React.DragEvent) => void
++  onDragEnd?: (e: React.DragEvent) => void
+ }
+ 
+-const statusConfig = {
+-  pending: { label: 'Pendiente', icon: Circle, className: 'bg-blue-500/10 text-blue-400' },
+-  in_progress: { label: 'En Progreso', icon: Clock, className: 'bg-amber-500/10 text-amber-400' },
+-  completed: { label: 'Completada', icon: CheckCircle2, className: 'bg-emerald-500/10 text-emerald-400' },
++const priorityConfig = {
++  low: { label: 'Baja', icon: ChevronDown, className: 'text-blue-400' },
++  medium: { label: 'Media', icon: Minus, className: 'text-amber-400' },
++  high: { label: 'Alta', icon: ChevronUp, className: 'text-red-400' },
+ }
+ 
+-const priorityConfig = {
+-  low: { label: 'Baja', className: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+-  medium: { label: 'Media', className: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
+-  high: { label: 'Alta', className: 'bg-red-500/10 text-red-400 border-red-500/20' },
++export function authorName(author?: Profile | null) {
++  return author?.display_name || author?.email?.split('@')[0] || 'Usuario'
+ }
+ 
+-export function TaskCard({ task, onClick }: TaskCardProps) {
+-  const status = statusConfig[task.status]
++export function TaskCard({ task, author, onClick, draggable, dragging, onDragStart, onDragEnd }: TaskCardProps) {
++  const type = getType(task.type)
++  const TypeIcon = type.icon
+   const priority = priorityConfig[task.priority]
+-  const StatusIcon = status.icon
++  const PriorityIcon = priority.icon
+   const coverImage = task.attachments?.find((attachment) => attachment.file_type.startsWith('image/'))
+ 
+   const completedSubtasks = task.subtasks?.filter((s) => s.completed).length || 0
+@@ -35,61 +40,46 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
+   const progress = totalSubtasks > 0 ? Math.round((completedSubtasks / totalSubtasks) * 100) : 0
+   const fileUrl = (path: string) =>
+     path.startsWith('http') ? path : `/api/file?pathname=${encodeURIComponent(path)}`
++  const name = authorName(author)
+ 
+   return (
+-    <Card
+-      className="group cursor-pointer gap-0 overflow-hidden rounded-lg border-border/60 bg-card/70 py-0 shadow-none transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-[0_18px_45px_rgba(0,0,0,0.22)]"
++    <div
++      role="button"
++      tabIndex={0}
++      draggable={draggable}
++      onDragStart={onDragStart}
++      onDragEnd={onDragEnd}
+       onClick={onClick}
++      onKeyDown={(e) => {
++        if (e.key === 'Enter' || e.key === ' ') {
++          e.preventDefault()
++          onClick()
++        }
++      }}
++      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border border-border/60 bg-card/80 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-[0_14px_36px_rgba(0,0,0,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
++        dragging ? 'rotate-1 opacity-40' : ''
++      } ${draggable ? 'active:cursor-grabbing' : ''}`}
+     >
+-      <div className="h-1 w-full bg-muted/40">
+-        <div
+-          className={`h-full ${task.status === 'completed' ? 'bg-emerald-400' : task.status === 'in_progress' ? 'bg-amber-400' : 'bg-blue-400'}`}
+-          style={{ width: totalSubtasks > 0 ? `${progress}%` : task.status === 'completed' ? '100%' : task.status === 'in_progress' ? '55%' : '22%' }}
+-        />
+-      </div>
++      {/* Franja de color según el tipo */}
++      <span className={`absolute inset-y-0 left-0 w-1 ${type.accent}`} />
++
+       {coverImage && (
+-        <div className="relative h-36 overflow-hidden border-b border-border/50 bg-muted/30">
++        <div className="relative h-28 overflow-hidden border-b border-border/50 bg-muted/30">
+           {/* eslint-disable-next-line @next/next/no-img-element */}
+           <img
+             src={fileUrl(coverImage.file_path)}
+             alt={coverImage.file_name}
++            draggable={false}
+             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+           />
+-          <div className="absolute inset-0 bg-gradient-to-t from-background/65 via-transparent to-transparent" />
+         </div>
+       )}
+-      <CardHeader className="p-4 pb-2">
+-        <div className="flex items-start justify-between gap-2">
+-          <div className="min-w-0 space-y-2">
+-            <div className="flex flex-wrap items-center gap-2">
+-              <Badge variant="outline" className={status.className}>
+-                <StatusIcon className="mr-1 h-3 w-3" />
+-                {status.label}
+-              </Badge>
+-              {task.priority === 'high' && (
+-                <Badge variant="outline" className="border-red-500/30 bg-red-500/10 text-red-300">
+-                  <AlertTriangle className="mr-1 h-3 w-3" />
+-                  Bloqueante
+-                </Badge>
+-              )}
+-            </div>
+-            <h3 className="text-base font-semibold leading-tight text-balance transition-colors group-hover:text-primary">
+-              {task.title}
+-            </h3>
+-          </div>
+-          <ArrowUpRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:text-primary group-hover:opacity-100" />
+-        </div>
+-      </CardHeader>
+-      <CardContent className="p-4 pt-0 space-y-3">
+-        {task.description && (
+-          <p className="text-sm text-muted-foreground line-clamp-2">
+-            {task.description}
+-          </p>
+-        )}
+ 
+-        <div className="flex flex-wrap items-center gap-2">
+-          <Badge variant="outline" className={priority.className}>
+-            Prioridad {priority.label}
++      <div className="space-y-3 p-3 pl-4">
++        <div className="flex flex-wrap items-center gap-1.5">
++          <Badge variant="outline" className={type.className}>
++            <TypeIcon className="mr-1 h-3 w-3" />
++            {type.label}
+           </Badge>
+           {task.category && (
+             <Badge
+@@ -103,10 +93,35 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
+               {task.category.name}
+             </Badge>
+           )}
++          {task.priority === 'high' && (
++            <Badge variant="outline" className="border-red-500/30 bg-red-500/10 text-red-300">
++              <Flame className="mr-1 h-3 w-3" />
++              Urgente
++            </Badge>
++          )}
+         </div>
+ 
+-        {(totalSubtasks > 0 || commentsCount > 0 || attachmentsCount > 0) && (
+-          <div className="flex items-center gap-3 border-t border-border/50 pt-3 text-xs text-muted-foreground">
++        <div className="space-y-1">
++          <h3 className="text-sm font-semibold leading-snug text-balance transition-colors group-hover:text-primary">
++            {task.title}
++          </h3>
++          {task.description && (
++            <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{task.description}</p>
++          )}
++        </div>
++
++        {totalSubtasks > 0 && (
++          <div className="h-1.5 overflow-hidden rounded-full bg-muted/60">
++            <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${progress}%` }} />
++          </div>
++        )}
++
++        <div className="flex items-center justify-between gap-2 border-t border-border/50 pt-2.5 text-xs text-muted-foreground">
++          <div className="flex items-center gap-3">
++            <span className={`flex items-center gap-0.5 ${priority.className}`} title={`Prioridad ${priority.label}`}>
++              <PriorityIcon className="h-3.5 w-3.5" />
++              {priority.label}
++            </span>
+             {totalSubtasks > 0 && (
+               <span className="flex items-center gap-1">
+                 <CheckSquare className="h-3.5 w-3.5" />
+@@ -126,8 +141,16 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
+               </span>
+             )}
+           </div>
+-        )}
+-      </CardContent>
+-    </Card>
++          <div className="flex min-w-0 items-center gap-1.5" title={`Creado por ${name}`}>
++            <Avatar className="h-5 w-5">
++              <AvatarFallback className="bg-primary/15 text-[10px] text-primary">
++                {name[0]?.toUpperCase()}
++              </AvatarFallback>
++            </Avatar>
++            <span className="max-w-[80px] truncate">{name}</span>
++          </div>
++        </div>
++      </div>
++    </div>
+   )
+ }
+diff --git a/components/task-detail.tsx b/components/task-detail.tsx
+index a99be61..3446c6f 100644
+--- a/components/task-detail.tsx
++++ b/components/task-detail.tsx
+@@ -2,7 +2,9 @@
+ 
+ import { useState } from 'react'
+ import { createClient } from '@/lib/supabase/client'
+-import type { TaskWithRelations, Subtask, Comment, Attachment, Category, TaskStatus, TaskPriority } from '@/lib/types'
++import type { TaskWithRelations, Subtask, Comment, Attachment, Category, TaskStatus, TaskPriority, TaskType, Profile } from '@/lib/types'
++import { typeConfig, typeOrder, getType } from '@/lib/task-config'
++import { authorName } from '@/components/task-card'
+ import { Button } from '@/components/ui/button'
+ import { Input } from '@/components/ui/input'
+ import { Textarea } from '@/components/ui/textarea'
+@@ -55,6 +57,7 @@ interface TaskDetailProps {
+   open: boolean
+   onOpenChange: (open: boolean) => void
+   categories: Category[]
++  profiles?: Profile[]
+   onUpdate: () => void
+   onDelete: () => void
+ }
+@@ -65,7 +68,7 @@ const statusConfig = {
+   completed: { label: 'Completada', icon: CheckCircle2, className: 'bg-emerald-500/10 text-emerald-400' },
+ }
+ 
+-export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onDelete }: TaskDetailProps) {
++export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], onUpdate, onDelete }: TaskDetailProps) {
+   const [newSubtask, setNewSubtask] = useState('')
+   const [newComment, setNewComment] = useState('')
+   const [imageUrlInput, setImageUrlInput] = useState('')
+@@ -81,6 +84,15 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
+   const status = statusConfig[task.status]
+   const StatusIcon = status.icon
+   const completedSubtasks = task.subtasks.filter((s) => s.completed).length
++  const taskType = getType(task.type)
++  const TypeIcon = taskType.icon
++  const author = profiles.find((p) => p.id === task.user_id)
++  const profileById = (id: string) => profiles.find((p) => p.id === id)
++
++  const handleTypeChange = async (newType: TaskType) => {
++    await supabase.from('tasks').update({ type: newType }).eq('id', task.id)
++    onUpdate()
++  }
+ 
+   const handleStatusChange = async (newStatus: TaskStatus) => {
+     await supabase.from('tasks').update({ status: newStatus }).eq('id', task.id)
+@@ -226,10 +238,35 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
+             <div className="flex items-start justify-between gap-4">
+               <SheetTitle className="text-xl text-pretty leading-tight">{task.title}</SheetTitle>
+             </div>
++            <p className="text-xs text-muted-foreground">
++              Creado por <span className="font-medium text-foreground">{authorName(author)}</span>{' '}
++              {formatDistanceToNow(new Date(task.created_at), { addSuffix: true, locale: es })}
++            </p>
+             {task.description && (
+               <p className="text-sm text-muted-foreground">{task.description}</p>
+             )}
+             <div className="flex flex-wrap gap-2">
++              <Select value={task.type ?? 'task'} onValueChange={(v) => handleTypeChange(v as TaskType)}>
++                <SelectTrigger className="w-auto h-8 text-xs">
++                  <Badge variant="outline" className={taskType.className}>
++                    <TypeIcon className="mr-1 h-3 w-3" />
++                    {taskType.label}
++                  </Badge>
++                </SelectTrigger>
++                <SelectContent>
++                  {typeOrder.map((t) => {
++                    const Icon = typeConfig[t].icon
++                    return (
++                      <SelectItem key={t} value={t}>
++                        <div className="flex items-center gap-2">
++                          <Icon className="h-3.5 w-3.5" />
++                          {typeConfig[t].label}
++                        </div>
++                      </SelectItem>
++                    )
++                  })}
++                </SelectContent>
++              </Select>
+               <Select value={task.status} onValueChange={handleStatusChange}>
+                 <SelectTrigger className="w-auto h-8 text-xs">
+                   <Badge variant="outline" className={status.className}>
+@@ -443,14 +480,14 @@ export function TaskDetail({ task, open, onOpenChange, categories, onUpdate, onD
+                     <div key={comment.id} className="group/comment flex gap-3 rounded-lg p-2 transition-colors hover:bg-muted/30">
+                       <Avatar className="h-8 w-8 shrink-0">
+                         <AvatarFallback className="bg-primary/10 text-primary text-xs">
+-                          {comment.profile?.display_name?.[0]?.toUpperCase() || 'U'}
++                          {authorName(comment.profile ?? profileById(comment.user_id))[0]?.toUpperCase() || 'U'}
+                         </AvatarFallback>
+                       </Avatar>
+                       <div className="flex-1 space-y-1">
+                         <div className="flex items-start justify-between gap-2">
+                           <div className="flex flex-wrap items-center gap-2">
+                             <span className="text-sm font-medium">
+-                              {comment.profile?.display_name || 'Usuario'}
++                              {authorName(comment.profile ?? profileById(comment.user_id))}
+                             </span>
+                             <span className="text-xs text-muted-foreground">
+                               {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: es })}
+diff --git a/components/task-dialog.tsx b/components/task-dialog.tsx
+index b6e9a38..3145cbc 100644
+--- a/components/task-dialog.tsx
++++ b/components/task-dialog.tsx
+@@ -22,7 +22,8 @@ import {
+   SelectValue,
+ } from '@/components/ui/select'
+ import { Link, Loader2, X } from 'lucide-react'
+-import type { Task, Category, TaskStatus, TaskPriority } from '@/lib/types'
++import type { Task, Category, TaskStatus, TaskPriority, TaskType } from '@/lib/types'
++import { typeConfig, typeOrder } from '@/lib/task-config'
+ 
+ interface TaskDialogProps {
+   open: boolean
+@@ -30,13 +31,16 @@ interface TaskDialogProps {
+   task?: Task | null
+   categories: Category[]
+   onSuccess: () => void
++  defaultType?: TaskType
++  defaultStatus?: TaskStatus
+ }
+ 
+-export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }: TaskDialogProps) {
++export function TaskDialog({ open, onOpenChange, task, categories, onSuccess, defaultType = 'task', defaultStatus = 'pending' }: TaskDialogProps) {
+   const [title, setTitle] = useState('')
+   const [description, setDescription] = useState('')
+   const [status, setStatus] = useState<TaskStatus>('pending')
+   const [priority, setPriority] = useState<TaskPriority>('medium')
++  const [type, setType] = useState<TaskType>('task')
+   const [categoryId, setCategoryId] = useState<string>('')
+   const [imageUrls, setImageUrls] = useState<string[]>([])
+   const [imageUrlInput, setImageUrlInput] = useState('')
+@@ -50,17 +54,19 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }:
+       setDescription(task.description || '')
+       setStatus(task.status)
+       setPriority(task.priority)
++      setType(task.type ?? 'task')
+       setCategoryId(task.category_id || 'none')
+     } else {
+       setTitle('')
+       setDescription('')
+-      setStatus('pending')
+-      setPriority('medium')
++      setStatus(defaultStatus)
++      setPriority(defaultType === 'bug' ? 'high' : 'medium')
++      setType(defaultType)
+       setCategoryId('none')
+     }
+     setImageUrls([])
+     setImageUrlInput('')
+-  }, [task, open])
++  }, [task, open, defaultType, defaultStatus])
+ 
+   const addUrl = () => {
+     const url = imageUrlInput.trim()
+@@ -109,8 +115,10 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }:
+         description: description || null,
+         status,
+         priority,
++        type,
+         category_id: categoryId === 'none' ? null : categoryId,
+-        user_id: user.id,
++        // Al editar se conserva el autor original; solo se asigna al crear
++        ...(task ? {} : { user_id: user.id }),
+         updated_at: new Date().toISOString(),
+       }
+ 
+@@ -152,9 +160,9 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }:
+     <Dialog open={open} onOpenChange={onOpenChange}>
+       <DialogContent className="sm:max-w-[500px]">
+         <DialogHeader>
+-          <DialogTitle>{task ? 'Editar Tarea' : 'Nueva Tarea'}</DialogTitle>
++          <DialogTitle>{task ? `Editar ${typeConfig[type].label}` : `Nuevo: ${typeConfig[type].label}`}</DialogTitle>
+           <DialogDescription>
+-            {task ? 'Modifica los detalles de la tarea' : 'Crea una nueva tarea de desarrollo'}
++            {task ? 'Modifica los detalles' : 'Visible para todo el equipo en cuanto lo crees'}
+           </DialogDescription>
+         </DialogHeader>
+         <form onSubmit={handleSubmit}>
+@@ -164,6 +172,31 @@ export function TaskDialog({ open, onOpenChange, task, categories, onSuccess }:
+                 {error}
+               </div>
+             )}
++            <div className="space-y-2">
++              <Label>Tipo</Label>
++              <div className="grid grid-cols-4 gap-2">
++                {typeOrder.map((t) => {
++                  const cfg = typeConfig[t]
++                  const Icon = cfg.icon
++                  const active = type === t
++                  return (
++                    <button
++                      key={t}
++                      type="button"
++                      onClick={() => setType(t)}
++                      className={`flex flex-col items-center gap-1.5 rounded-lg border px-2 py-3 text-xs font-medium transition-all ${
++                        active
++                          ? `${cfg.className} ring-2 ring-offset-2 ring-offset-background ring-current`
++                          : 'border-border/60 bg-card/40 text-muted-foreground hover:bg-card/80'
++                      }`}
++                    >
++                      <Icon className="h-5 w-5" />
++                      {cfg.label}
++                    </button>
++                  )
++                })}
++              </div>
++            </div>
+             <div className="space-y-2">
+               <Label htmlFor="title">Titulo</Label>
+               <Input
+diff --git a/lib/task-config.ts b/lib/task-config.ts
+new file mode 100644
+index 0000000..034d39d
+--- /dev/null
++++ b/lib/task-config.ts
+@@ -0,0 +1,55 @@
++import { Bug, Lightbulb, Sparkles, ListTodo, Circle, Clock, CheckCircle2 } from 'lucide-react'
++import type { TaskStatus, TaskType } from '@/lib/types'
++
++export const typeConfig: Record<
++  TaskType,
++  { label: string; plural: string; icon: typeof Bug; className: string; accent: string }
++> = {
++  bug: {
++    label: 'Bug',
++    plural: 'Bugs',
++    icon: Bug,
++    className: 'border-red-500/30 bg-red-500/10 text-red-300',
++    accent: 'bg-red-400',
++  },
++  idea: {
++    label: 'Idea',
++    plural: 'Ideas',
++    icon: Lightbulb,
++    className: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300',
++    accent: 'bg-yellow-400',
++  },
++  improvement: {
++    label: 'Mejora',
++    plural: 'Mejoras',
++    icon: Sparkles,
++    className: 'border-violet-500/30 bg-violet-500/10 text-violet-300',
++    accent: 'bg-violet-400',
++  },
++  task: {
++    label: 'Tarea',
++    plural: 'Tareas',
++    icon: ListTodo,
++    className: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
++    accent: 'bg-sky-400',
++  },
++}
++
++export const typeOrder: TaskType[] = ['bug', 'idea', 'improvement', 'task']
++
++export function getType(type: TaskType | null | undefined) {
++  return typeConfig[type ?? 'task'] ?? typeConfig.task
++}
++
++export const columns: {
++  status: TaskStatus
++  label: string
++  icon: typeof Circle
++  dot: string
++  text: string
++  ring: string
++}[] = [
++  { status: 'pending', label: 'Pendiente', icon: Circle, dot: 'bg-blue-400', text: 'text-blue-400', ring: 'ring-blue-400/60' },
++  { status: 'in_progress', label: 'En progreso', icon: Clock, dot: 'bg-amber-400', text: 'text-amber-400', ring: 'ring-amber-400/60' },
++  { status: 'completed', label: 'Hecho', icon: CheckCircle2, dot: 'bg-emerald-400', text: 'text-emerald-400', ring: 'ring-emerald-400/60' },
++]
+diff --git a/lib/types.ts b/lib/types.ts
+index 12788b8..3114e38 100644
+--- a/lib/types.ts
++++ b/lib/types.ts
+@@ -1,9 +1,10 @@
+ export type TaskStatus = 'pending' | 'in_progress' | 'completed'
+ export type TaskPriority = 'low' | 'medium' | 'high'
++export type TaskType = 'task' | 'bug' | 'idea' | 'improvement'
+ 
+ export interface Profile { id: string; email: string | null; display_name: string | null; avatar_url: string | null; created_at: string; updated_at: string }
+ export interface Category { id: string; user_id: string; name: string; color: string; created_at: string }
+-export interface Task { id: string; user_id: string; category_id: string | null; title: string; description: string | null; status: TaskStatus; priority: TaskPriority; created_at: string; updated_at: string; category?: Category | null; subtasks?: Subtask[]; comments?: Comment[]; attachments?: Attachment[] }
++export interface Task { id: string; user_id: string; category_id: string | null; title: string; description: string | null; status: TaskStatus; priority: TaskPriority; type?: TaskType | null; created_at: string; updated_at: string; category?: Category | null; subtasks?: Subtask[]; comments?: Comment[]; attachments?: Attachment[] }
+ export interface Subtask { id: string; task_id: string; title: string; completed: boolean; created_at: string }
+ export interface Comment { id: string; task_id: string; user_id: string; content: string; created_at: string; profile?: Profile }
+ export interface Attachment { id: string; task_id: string; user_id: string; file_name: string; file_path: string; file_type: string; file_size: number; created_at: string }
+diff --git a/supabase/shared-workspace.sql b/supabase/shared-workspace.sql
+new file mode 100644
+index 0000000..49b31ab
+--- /dev/null
++++ b/supabase/shared-workspace.sql
+@@ -0,0 +1,68 @@
++-- =====================================================================
++-- Workspace compartido: todos los usuarios registrados ven y trabajan
++-- sobre las mismas tareas, categorías, subtareas, comentarios y archivos.
++--
++-- Ejecutar UNA vez en Supabase -> SQL Editor.
++-- =====================================================================
++
++-- 1) Nuevo campo "type" (bug / idea / improvement / task)
++alter table public.tasks
++  add column if not exists type text not null default 'task';
++
++alter table public.tasks
++  drop constraint if exists tasks_type_check;
++alter table public.tasks
++  add constraint tasks_type_check check (type in ('task', 'bug', 'idea', 'improvement'));
++
++-- 2) Borra las políticas RLS actuales de estas tablas (eran "solo lo mío")
++do $$
++declare
++  p record;
++begin
++  for p in
++    select schemaname, tablename, policyname
++    from pg_policies
++    where schemaname = 'public'
++      and tablename in ('tasks', 'categories', 'subtasks', 'comments', 'attachments', 'profiles')
++  loop
++    execute format('drop policy if exists %I on %I.%I', p.policyname, p.schemaname, p.tablename);
++  end loop;
++end $$;
++
++alter table public.tasks       enable row level security;
++alter table public.categories  enable row level security;
++alter table public.subtasks    enable row level security;
++alter table public.comments    enable row level security;
++alter table public.attachments enable row level security;
++alter table public.profiles    enable row level security;
++
++-- 3) Cualquier usuario autenticado puede VER todo
++create policy "team can read tasks"       on public.tasks       for select to authenticated using (true);
++create policy "team can read categories"  on public.categories  for select to authenticated using (true);
++create policy "team can read subtasks"    on public.subtasks    for select to authenticated using (true);
++create policy "team can read comments"    on public.comments    for select to authenticated using (true);
++create policy "team can read attachments" on public.attachments for select to authenticated using (true);
++create policy "team can read profiles"    on public.profiles    for select to authenticated using (true);
++
++-- 4) Cualquier usuario autenticado puede CREAR (siempre a su nombre)
++create policy "team can insert tasks"       on public.tasks       for insert to authenticated with check (user_id = auth.uid());
++create policy "team can insert categories"  on public.categories  for insert to authenticated with check (user_id = auth.uid());
++create policy "team can insert subtasks"    on public.subtasks    for insert to authenticated with check (true);
++create policy "team can insert comments"    on public.comments    for insert to authenticated with check (user_id = auth.uid());
++create policy "team can insert attachments" on public.attachments for insert to authenticated with check (user_id = auth.uid());
++create policy "users can insert own profile" on public.profiles   for insert to authenticated with check (id = auth.uid());
++
++-- 5) Editar: el equipo puede editar tareas, categorías y subtareas;
++--    cada uno solo edita su propio perfil
++create policy "team can update tasks"      on public.tasks      for update to authenticated using (true) with check (true);
++create policy "team can update categories" on public.categories for update to authenticated using (true) with check (true);
++create policy "team can update subtasks"   on public.subtasks   for update to authenticated using (true) with check (true);
++create policy "users can update own profile" on public.profiles for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
++
++-- 6) Borrar: el equipo puede borrar tareas, categorías, subtareas y archivos;
++--    los comentarios solo los puede borrar su autor
++create policy "team can delete tasks"       on public.tasks       for delete to authenticated using (true);
++create policy "team can delete categories"  on public.categories  for delete to authenticated using (true);
++create policy "team can delete subtasks"    on public.subtasks    for delete to authenticated using (true);
++create policy "team can delete attachments" on public.attachments for delete to authenticated using (true);
++create policy "authors can delete comments" on public.comments    for delete to authenticated using (user_id = auth.uid());
