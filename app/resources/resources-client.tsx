@@ -20,17 +20,94 @@ const typeColors: Record<ResourceType, string> = { script: 'bg-primary/10 text-p
 const statusLabels: Record<ResourceStatus, string> = { pending: 'Pendiente', in_progress: 'En progreso', implemented: 'Implementado' }
 const statusColors: Record<ResourceStatus, string> = { pending: 'bg-blue-500/10 text-blue-400', in_progress: 'bg-amber-500/10 text-amber-300', implemented: 'bg-emerald-500/10 text-emerald-300' }
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
-const MAX_RESOURCE_FILE_SIZE = 50 * 1024 * 1024
+const MAX_RESOURCE_FILE_SIZE = 700 * 1024 * 1024
 const MAX_IMAGES = 8
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 
 type ResourceWithAttachments = Resource & { resource_attachments?: ResourceAttachment[] }
 type DraftImage = { file: File; previewUrl: string; id: string }
 type DraftResourceFile = { file: File; id: string }
+type MultipartUpload = { key: string; uploadId: string; partSize: number }
 type ResourceForm = { title: string; description: string; resource_type: ResourceType; status: ResourceStatus; url: string; download_url: string; tags: string; notes: string }
 
 const emptyForm: ResourceForm = { title: '', description: '', resource_type: 'script', status: 'pending', url: '', download_url: '', tags: '', notes: '' }
 const imageUrl = (path: string) => path.startsWith('r2/') ? `/api/file?pathname=${encodeURIComponent(path)}` : path
+
+async function postUploadAction<T>(payload: Record<string, unknown>): Promise<T> {
+  const response = await fetch('/api/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const result = await response.json() as T & { error?: string }
+  if (!response.ok) throw new Error(result.error || 'No se pudo continuar la carga a Cloudflare R2.')
+  return result
+}
+
+function uploadMultipartPart(url: string, body: Blob, onProgress: (loaded: number) => void) {
+  return new Promise<string>((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('PUT', url)
+    request.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress(event.loaded)
+    })
+    request.addEventListener('load', () => {
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(`R2 rechazó una parte de la carga (${request.status}).`))
+        return
+      }
+      const etag = request.getResponseHeader('ETag')
+      if (!etag) {
+        reject(new Error('R2 no expuso el encabezado ETag. Configura CORS del bucket para exponer ETag.'))
+        return
+      }
+      resolve(etag)
+    })
+    request.addEventListener('error', () => reject(new Error('Error de red al subir una parte del archivo a R2.')))
+    request.addEventListener('abort', () => reject(new Error('La carga de una parte del archivo fue interrumpida.')))
+    request.send(body)
+  })
+}
+
+async function uploadResourceFile(
+  file: File,
+  multipart: MultipartUpload,
+  onProgress: (percentage: number) => void,
+) {
+  const parts: { PartNumber: number; ETag: string }[] = []
+  let completedBytes = 0
+  const partCount = Math.ceil(file.size / multipart.partSize)
+
+  for (let partNumber = 1; partNumber <= partCount; partNumber++) {
+    const start = (partNumber - 1) * multipart.partSize
+    const part = file.slice(start, Math.min(start + multipart.partSize, file.size))
+    let etag: string | undefined
+    let lastError: Error | undefined
+
+    for (let attempt = 0; attempt < 3 && !etag; attempt++) {
+      try {
+        const { uploadUrl } = await postUploadAction<{ uploadUrl: string }>({
+          action: 'sign-part',
+          key: multipart.key,
+          uploadId: multipart.uploadId,
+          partNumber,
+        })
+        etag = await uploadMultipartPart(uploadUrl, part, (loaded) => {
+          onProgress(Math.min(100, Math.round(((completedBytes + loaded) / file.size) * 100)))
+        })
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Error al subir una parte del archivo.')
+      }
+    }
+
+    if (!etag) throw lastError ?? new Error(`No se pudo subir la parte ${partNumber}.`)
+    parts.push({ PartNumber: partNumber, ETag: etag })
+    completedBytes += part.size
+    onProgress(Math.min(100, Math.round((completedBytes / file.size) * 100)))
+  }
+
+  await postUploadAction({ action: 'complete', key: multipart.key, uploadId: multipart.uploadId, parts })
+}
 
 async function deleteStoredFile(pathname: string) {
   try {
@@ -71,6 +148,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState<string[]>([])
   const [bannerId, setBannerId] = useState('')
   const [saving, setSaving] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState('')
   const [uploadError, setUploadError] = useState('')
   const [draggingImages, setDraggingImages] = useState(false)
   const previewUrls = useRef<string[]>([])
@@ -101,6 +179,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     setBannerId('')
     setEditing(null)
     setUploadError('')
+    setUploadProgress('')
   }
 
   const openNewResource = () => {
@@ -180,7 +259,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     const valid: DraftResourceFile[] = []
     for (const file of Array.from(files)) {
       if (file.size > MAX_RESOURCE_FILE_SIZE) {
-        setUploadError(`${file.name} supera el límite de 50 MB.`)
+        setUploadError(`${file.name} supera el límite de 700 MB.`)
         continue
       }
       if (!file.size) {
@@ -217,6 +296,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     setUploadError('')
     const uploadedKeys: string[] = []
     let createdResourceId: string | null = null
+    const activeMultipartUploads: MultipartUpload[] = []
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Tu sesión no está disponible. Vuelve a iniciar sesión.')
@@ -250,27 +330,45 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
       ]
       for (const [index, attachment] of newAttachments.entries()) {
         const contentType = attachment.file.type || 'application/octet-stream'
-        const signResponse = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: attachment.file.name, contentType, fileSize: attachment.file.size, purpose: attachment.purpose }),
-        })
-        const signed = await signResponse.json()
-        if (!signResponse.ok) throw new Error(signed.error || `No se pudo preparar la carga de ${attachment.file.name}.`)
+        let key: string
+        if (attachment.purpose === 'resource-file') {
+          const multipart = await postUploadAction<MultipartUpload>({
+            filename: attachment.file.name,
+            contentType,
+            fileSize: attachment.file.size,
+            purpose: attachment.purpose,
+          })
+          activeMultipartUploads.push(multipart)
+          uploadedKeys.push(multipart.key)
+          key = multipart.key
+          setUploadProgress(`Subiendo ${attachment.file.name}: 0%`)
+          await uploadResourceFile(attachment.file, multipart, (percentage) => {
+            setUploadProgress(`Subiendo ${attachment.file.name}: ${percentage}%`)
+          })
+          activeMultipartUploads.splice(activeMultipartUploads.indexOf(multipart), 1)
+        } else {
+          const signed = await postUploadAction<{ uploadUrl: string; key: string }>({
+            filename: attachment.file.name,
+            contentType,
+            fileSize: attachment.file.size,
+            purpose: attachment.purpose,
+          })
+          uploadedKeys.push(signed.key)
+          key = signed.key
+          const uploadResponse = await fetch(signed.uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': contentType },
+            body: attachment.file,
+          })
+          if (!uploadResponse.ok) throw new Error(`No se pudo subir ${attachment.file.name} a R2. Inténtalo de nuevo.`)
+        }
 
-        uploadedKeys.push(signed.key)
-        uploadedFilePaths.set(attachment.id, signed.key)
-        const uploadResponse = await fetch(signed.uploadUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': contentType },
-          body: attachment.file,
-        })
-        if (!uploadResponse.ok) throw new Error(`No se pudo subir ${attachment.file.name}. Inténtalo de nuevo.`)
+        uploadedFilePaths.set(attachment.id, key)
         uploadedAttachments.push({
           resource_id: resourceId,
           user_id: user.id,
           file_name: attachment.file.name,
-          file_path: signed.key,
+          file_path: key,
           file_type: contentType,
           file_size: attachment.file.size,
           position: existingAttachments.length + index,
@@ -342,8 +440,16 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo guardar el recurso.'
       setUploadError(message)
+      setUploadProgress('')
       toast.error(message)
       let canCleanUploadedFiles = true
+      for (const multipart of activeMultipartUploads) {
+        try {
+          await postUploadAction({ action: 'abort', key: multipart.key, uploadId: multipart.uploadId })
+        } catch {
+          toast.error(`No se pudo cancelar la carga multipart de ${multipart.key}.`)
+        }
+      }
       if (uploadedKeys.length) {
         const { error: rollbackError } = await supabase.from('resource_attachments').delete().in('file_path', uploadedKeys)
         if (rollbackError) {
@@ -453,7 +559,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
                 </div>
               </section>
               <section className="flex flex-col gap-2" aria-labelledby="resource-files-title">
-                <div><Label id="resource-files-title">Archivos adjuntos</Label><p className="mt-1 text-xs text-muted-foreground">Cualquier tipo de archivo, hasta 50 MB cada uno. Se guardan en Cloudflare R2.</p></div>
+                <div><Label id="resource-files-title">Archivos adjuntos</Label><p className="mt-1 text-xs text-muted-foreground">Cualquier tipo de archivo, hasta 700 MB cada uno. Se guardan en Cloudflare R2.</p></div>
                 <label htmlFor="resource-files" className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
                   <Paperclip className="size-4" />Selecciona archivos para subir a R2
                   <input id="resource-files" type="file" multiple className="sr-only" onChange={(event) => { addResourceFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
@@ -477,6 +583,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
                   ))}
                 </ul>}
               </section>
+              {uploadProgress && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">{uploadProgress}</p>}
               {uploadError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{uploadError}</p>}
             </div>
             <DialogFooter className="mt-5"><Button type="button" variant="outline" onClick={() => onDialogOpenChange(false)} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{saving ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar recurso'}</Button></DialogFooter>
