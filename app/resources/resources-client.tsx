@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Profile, Resource, ResourceAttachment, ResourceType } from '@/lib/types'
+import type { Profile, Resource, ResourceAttachment, ResourceStatus, ResourceType } from '@/lib/types'
 import { Header } from '@/components/header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,15 +17,17 @@ import { Bookmark, Download, ExternalLink, ImagePlus, Link2, Loader2, Pencil, Pl
 
 const typeLabels: Record<ResourceType, string> = { script: 'Script', mlo: 'MLO', vehicle: 'Vehículo', map: 'Mapa', ui: 'UI', tool: 'Herramienta', other: 'Otro' }
 const typeColors: Record<ResourceType, string> = { script: 'bg-primary/10 text-primary', mlo: 'bg-violet-500/10 text-violet-300', vehicle: 'bg-amber-500/10 text-amber-300', map: 'bg-sky-500/10 text-sky-300', ui: 'bg-pink-500/10 text-pink-300', tool: 'bg-orange-500/10 text-orange-300', other: 'bg-muted text-muted-foreground' }
+const statusLabels: Record<ResourceStatus, string> = { pending: 'Pendiente', in_progress: 'En progreso', implemented: 'Implementado' }
+const statusColors: Record<ResourceStatus, string> = { pending: 'bg-blue-500/10 text-blue-400', in_progress: 'bg-amber-500/10 text-amber-300', implemented: 'bg-emerald-500/10 text-emerald-300' }
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
 const MAX_IMAGES = 8
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 
 type ResourceWithAttachments = Resource & { resource_attachments?: ResourceAttachment[] }
 type DraftImage = { file: File; previewUrl: string; id: string }
-type ResourceForm = { title: string; description: string; resource_type: ResourceType; url: string; download_url: string; tags: string; notes: string }
+type ResourceForm = { title: string; description: string; resource_type: ResourceType; status: ResourceStatus; url: string; download_url: string; tags: string; notes: string }
 
-const emptyForm: ResourceForm = { title: '', description: '', resource_type: 'script', url: '', download_url: '', tags: '', notes: '' }
+const emptyForm: ResourceForm = { title: '', description: '', resource_type: 'script', status: 'pending', url: '', download_url: '', tags: '', notes: '' }
 const imageUrl = (path: string) => path.startsWith('r2/') ? `/api/file?pathname=${encodeURIComponent(path)}` : path
 
 async function deleteStoredFile(pathname: string) {
@@ -109,6 +111,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
       title: resource.title,
       description: resource.description ?? '',
       resource_type: resource.resource_type,
+      status: resource.status ?? 'pending',
       url: resource.url ?? '',
       download_url: resource.download_url ?? '',
       tags: resource.tags.join(', '),
@@ -185,6 +188,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
         title: form.title.trim(),
         description: form.description.trim() || null,
         resource_type: form.resource_type,
+        status: form.status,
         url: form.url.trim() || null,
         download_url: form.download_url.trim() || null,
         tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
@@ -347,8 +351,9 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
               <div className="flex flex-col gap-2"><Label htmlFor="resource-title">Título</Label><Input id="resource-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ej. Inventario avanzado" required /></div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-2"><Label>Tipo</Label><Select value={form.resource_type} onValueChange={(value) => setForm({ ...form, resource_type: value as ResourceType })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
-                <div className="flex flex-col gap-2"><Label>Etiquetas</Label><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="qbcore, ui" /></div>
+                <div className="flex flex-col gap-2"><Label>Estado</Label><Select value={form.status} onValueChange={(value) => setForm({ ...form, status: value as ResourceStatus })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(statusLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
               </div>
+              <div className="flex flex-col gap-2"><Label>Etiquetas</Label><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="qbcore, ui" /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-description">Descripción</Label><Textarea id="resource-description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Qué contiene y para qué sirve..." /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-url">Enlace de referencia</Label><Input id="resource-url" type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-download">Enlace de descarga</Label><Input id="resource-download" type="url" value={form.download_url} onChange={(e) => setForm({ ...form, download_url: e.target.value })} placeholder="https://..." /></div>
@@ -417,7 +422,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
       const thumbnails = attachments.filter((attachment) => attachment.id !== banner?.id)
       return <Card key={item.id} className="group overflow-hidden border-border/60 bg-card/70">
         {banner && <a href={imageUrl(banner.file_path)} target="_blank" rel="noreferrer" aria-label={`Abrir portada de ${item.title}`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} className="aspect-[16/8] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></a>}
-        <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><CardTitle className="mt-3 text-lg">{item.title}</CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
+        <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div><CardTitle className="mt-3 text-lg">{item.title}</CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
         <CardContent className="flex flex-col gap-4">
           {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" title={`Abrir ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} className="size-14 object-cover transition-opacity hover:opacity-80" /></a>)}</div>}
           <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="text-xs">#{tag}</Badge>)}</div>
