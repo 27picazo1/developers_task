@@ -58,6 +58,7 @@ create policy "team can update tasks"      on public.tasks      for update to au
 create policy "team can update categories" on public.categories for update to authenticated using (true) with check (true);
 create policy "team can update subtasks"   on public.subtasks   for update to authenticated using (true) with check (true);
 create policy "users can update own profile" on public.profiles for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
+create policy "authors can update comments" on public.comments for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- 6) Borrar: el equipo puede borrar tareas, categorías, subtareas y archivos;
 --    los comentarios solo los puede borrar su autor

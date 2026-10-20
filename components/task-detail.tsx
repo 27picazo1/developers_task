@@ -1,15 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { TaskWithRelations, Subtask, Comment, Attachment, Category, TaskStatus, TaskPriority, TaskType, Profile } from '@/lib/types'
+import type { TaskWithRelations, Subtask, Attachment, Category, TaskStatus, TaskPriority, TaskType, Profile } from '@/lib/types'
 import { typeConfig, typeOrder, getType } from '@/lib/task-config'
 import { authorName } from '@/components/task-card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Progress } from '@/components/ui/progress'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   Sheet,
@@ -17,6 +17,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Select,
   SelectContent,
@@ -36,17 +43,27 @@ import {
 } from '@/components/ui/alert-dialog'
 import {
   CheckCircle2,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   Clock,
-  Plus,
-  Trash2,
-  Link,
-  FileText,
-  Video,
-  FileArchive,
   Download,
-  Send,
+  ExternalLink,
+  FileArchive,
+  FileText,
+  ImageOff,
+  Link,
+  ListChecks,
   Loader2,
+  Maximize2,
+  MessageSquare,
+  Paperclip,
+  Pencil,
+  Plus,
+  Send,
+  Trash2,
+  Video,
   X,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
@@ -63,27 +80,182 @@ interface TaskDetailProps {
 }
 
 const statusConfig = {
-  pending: { label: 'Pendiente', icon: Circle, className: 'bg-blue-500/10 text-blue-400' },
-  in_progress: { label: 'En Progreso', icon: Clock, className: 'bg-amber-500/10 text-amber-400' },
-  completed: { label: 'Completada', icon: CheckCircle2, className: 'bg-emerald-500/10 text-emerald-400' },
+  pending: { label: 'Pendiente', icon: Circle, iconClass: 'text-blue-400' },
+  in_progress: { label: 'En progreso', icon: Clock, iconClass: 'text-amber-400' },
+  completed: { label: 'Completada', icon: CheckCircle2, iconClass: 'text-emerald-400' },
+}
+
+const priorityConfig = {
+  low: { label: 'Baja', dot: 'bg-emerald-400' },
+  medium: { label: 'Media', dot: 'bg-amber-400' },
+  high: { label: 'Alta', dot: 'bg-red-400' },
+}
+
+const timeAgo = (date: string) => formatDistanceToNow(new Date(date), { addSuffix: true, locale: es })
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{children}</span>
+}
+
+function SectionTitle({
+  icon: Icon,
+  children,
+  count,
+}: {
+  icon: typeof Paperclip
+  children: React.ReactNode
+  count?: string
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Icon className="h-4 w-4 text-muted-foreground" />
+      <h3 className="text-sm font-semibold">{children}</h3>
+      {count && (
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{count}</span>
+      )}
+    </div>
+  )
+}
+
+interface LightboxImage {
+  id: string
+  name: string
+  src: string
+}
+
+function ImageLightbox({
+  images,
+  index,
+  onIndexChange,
+  onClose,
+}: {
+  images: LightboxImage[]
+  index: number | null
+  onIndexChange: (index: number) => void
+  onClose: () => void
+}) {
+  const image = index !== null ? images[index] : null
+  const hasMany = images.length > 1
+
+  const go = (delta: number) => {
+    if (index === null) return
+    onIndexChange((index + delta + images.length) % images.length)
+  }
+
+  return (
+    <Dialog open={index !== null && !!image} onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent
+        showCloseButton={false}
+        className="gap-0 overflow-hidden border-white/10 bg-black/95 p-0 sm:max-w-[min(96vw,1100px)]"
+        onKeyDown={(e) => {
+          if (!hasMany) return
+          if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1) }
+          if (e.key === 'ArrowRight') { e.preventDefault(); go(1) }
+        }}
+      >
+        <DialogTitle className="sr-only">{image?.name ?? 'Imagen'}</DialogTitle>
+        <DialogDescription className="sr-only">Vista ampliada de la imagen adjunta</DialogDescription>
+        {image && (
+          <>
+            <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3 text-white">
+              <p className="min-w-0 flex-1 truncate text-sm font-medium">{image.name}</p>
+              {hasMany && (
+                <span className="text-xs text-white/60">{(index ?? 0) + 1} / {images.length}</span>
+              )}
+              <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white">
+                <a href={image.src} target="_blank" rel="noopener noreferrer" title="Abrir original">
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
+              <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white">
+                <a href={image.src} download={image.name} title="Descargar">
+                  <Download className="h-4 w-4" />
+                </a>
+              </Button>
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white" title="Cerrar">
+                  <X className="h-4 w-4" />
+                </Button>
+              </DialogClose>
+            </div>
+            <div className="relative flex min-h-[40vh] items-center justify-center p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                key={image.id}
+                src={image.src}
+                alt={image.name}
+                className="max-h-[78vh] max-w-full rounded-md object-contain"
+              />
+              {hasMany && (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    className="absolute left-3 top-1/2 h-10 w-10 -translate-y-1/2 rounded-full bg-white/10 text-white hover:bg-white/20"
+                    onClick={() => go(-1)}
+                    aria-label="Imagen anterior"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    className="absolute right-3 top-1/2 h-10 w-10 -translate-y-1/2 rounded-full bg-white/10 text-white hover:bg-white/20"
+                    onClick={() => go(1)}
+                    aria-label="Imagen siguiente"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </Button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], onUpdate, onDelete }: TaskDetailProps) {
   const [newSubtask, setNewSubtask] = useState('')
   const [newComment, setNewComment] = useState('')
+  const [sendingComment, setSendingComment] = useState(false)
   const [imageUrlInput, setImageUrlInput] = useState('')
   const [addingUrl, setAddingUrl] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const supabase = createClient()
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set())
+  const supabase = useMemo(() => createClient(), [])
+
+  useEffect(() => {
+    let active = true
+    supabase.auth.getUser().then(({ data }) => {
+      if (active) setCurrentUserId(data.user?.id ?? null)
+    })
+    return () => { active = false }
+  }, [supabase])
+
+  // Al cambiar de tarea o cerrar el panel, se descarta cualquier edición en curso.
+  useEffect(() => {
+    setEditingCommentId(null)
+    setEditError(null)
+    setLightboxIndex(null)
+  }, [task?.id, open])
 
   if (!task) return null
 
-  const status = statusConfig[task.status]
-  const StatusIcon = status.icon
   const completedSubtasks = task.subtasks.filter((s) => s.completed).length
+  const subtaskProgress = task.subtasks.length ? Math.round((completedSubtasks / task.subtasks.length) * 100) : 0
   const taskType = getType(task.type)
   const TypeIcon = taskType.icon
   const author = profiles.find((p) => p.id === task.user_id)
@@ -127,17 +299,59 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
     onUpdate()
   }
 
-  const handleAddComment = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newComment.trim()) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    await supabase.from('comments').insert({
-      task_id: task.id,
-      user_id: user.id,
-      content: newComment.trim(),
-    })
-    setNewComment('')
+  const handleAddComment = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!newComment.trim() || sendingComment) return
+    setSendingComment(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      await supabase.from('comments').insert({
+        task_id: task.id,
+        user_id: user.id,
+        content: newComment.trim(),
+      })
+      setNewComment('')
+      onUpdate()
+    } finally {
+      setSendingComment(false)
+    }
+  }
+
+  const startEditComment = (commentId: string, content: string) => {
+    setEditingCommentId(commentId)
+    setEditText(content)
+    setEditError(null)
+  }
+
+  const cancelEditComment = () => {
+    setEditingCommentId(null)
+    setEditText('')
+    setEditError(null)
+  }
+
+  const handleSaveComment = async (commentId: string, original: string) => {
+    const content = editText.trim()
+    if (!content || !currentUserId) return
+    if (content === original.trim()) {
+      cancelEditComment()
+      return
+    }
+    setSavingEdit(true)
+    setEditError(null)
+    // Con RLS, un UPDATE sin permiso no da error: devuelve 0 filas. Por eso se pide el resultado.
+    const { data, error } = await supabase
+      .from('comments')
+      .update({ content })
+      .eq('id', commentId)
+      .eq('user_id', currentUserId)
+      .select('id')
+    setSavingEdit(false)
+    if (error || !data || data.length === 0) {
+      setEditError('No se pudo guardar el cambio. Comprueba que has aplicado la migración de edición de comentarios en Supabase.')
+      return
+    }
+    cancelEditComment()
     onUpdate()
   }
 
@@ -225,114 +439,164 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
   const isVideo = (fileType: string) => fileType.startsWith('video/')
   const isArchive = (fileType: string) => ['application/zip', 'application/x-rar-compressed', 'application/x-rar', 'application/x-7z-compressed', 'application/gzip', 'application/x-tar'].includes(fileType) || /\.(zip|rar|7z|tar|gz)$/i.test(fileType)
   const formatFileSize = (bytes: number) => {
+    if (!bytes) return 'Enlace externo'
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  const imageAttachments = task.attachments.filter((a) => isImage(a.file_type))
+  const otherAttachments = task.attachments.filter((a) => !isImage(a.file_type))
+  const lightboxImages: LightboxImage[] = imageAttachments.map((a) => ({
+    id: a.id,
+    name: a.file_name,
+    src: fileUrl(a.file_path),
+  }))
+
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-          <SheetHeader className="space-y-4 pb-6">
-            <div className="flex items-start justify-between gap-4">
-              <SheetTitle className="text-xl text-pretty leading-tight">{task.title}</SheetTitle>
+        <SheetContent className="w-full gap-0 overflow-y-auto p-0 sm:max-w-xl">
+          <SheetHeader className="gap-0 space-y-5 border-b border-border/60 bg-muted/20 p-6 pr-12">
+            <div className="space-y-3">
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${taskType.className}`}>
+                <TypeIcon className="h-3 w-3" />
+                {taskType.label}
+              </span>
+              <SheetTitle className="text-2xl leading-tight text-pretty">{task.title}</SheetTitle>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Avatar className="h-5 w-5">
+                  <AvatarFallback className="bg-primary/10 text-[10px] text-primary">
+                    {authorName(author)[0]?.toUpperCase() || 'U'}
+                  </AvatarFallback>
+                </Avatar>
+                <span>
+                  Creada por <span className="font-medium text-foreground">{authorName(author)}</span> · {timeAgo(task.created_at)}
+                </span>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Creado por <span className="font-medium text-foreground">{authorName(author)}</span>{' '}
-              {formatDistanceToNow(new Date(task.created_at), { addSuffix: true, locale: es })}
-            </p>
+
             {task.description && (
-              <p className="text-sm text-muted-foreground">{task.description}</p>
+              <p className="whitespace-pre-wrap rounded-lg border border-border/50 bg-background/60 p-3 text-sm leading-relaxed text-foreground/80">
+                {task.description}
+              </p>
             )}
-            <div className="flex flex-wrap gap-2">
-              <Select value={task.type ?? 'task'} onValueChange={(v) => handleTypeChange(v as TaskType)}>
-                <SelectTrigger className="w-auto h-8 text-xs">
-                  <Badge variant="outline" className={taskType.className}>
-                    <TypeIcon className="mr-1 h-3 w-3" />
-                    {taskType.label}
-                  </Badge>
-                </SelectTrigger>
-                <SelectContent>
-                  {typeOrder.map((t) => {
-                    const Icon = typeConfig[t].icon
-                    return (
-                      <SelectItem key={t} value={t}>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <FieldLabel>Estado</FieldLabel>
+                <Select value={task.status} onValueChange={(v) => handleStatusChange(v as TaskStatus)}>
+                  <SelectTrigger className="h-9 w-full bg-background text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(statusConfig) as TaskStatus[]).map((s) => {
+                      const Icon = statusConfig[s].icon
+                      return (
+                        <SelectItem key={s} value={s}>
+                          <div className="flex items-center gap-2">
+                            <Icon className={`h-3.5 w-3.5 ${statusConfig[s].iconClass}`} />
+                            {statusConfig[s].label}
+                          </div>
+                        </SelectItem>
+                      )
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <FieldLabel>Prioridad</FieldLabel>
+                <Select value={task.priority} onValueChange={(v) => handlePriorityChange(v as TaskPriority)}>
+                  <SelectTrigger className="h-9 w-full bg-background text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(priorityConfig) as TaskPriority[]).map((p) => (
+                      <SelectItem key={p} value={p}>
                         <div className="flex items-center gap-2">
-                          <Icon className="h-3.5 w-3.5" />
-                          {typeConfig[t].label}
+                          <span className={`h-2.5 w-2.5 rounded-full ${priorityConfig[p].dot}`} />
+                          {priorityConfig[p].label}
                         </div>
                       </SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
-              <Select value={task.status} onValueChange={handleStatusChange}>
-                <SelectTrigger className="w-auto h-8 text-xs">
-                  <Badge variant="outline" className={status.className}>
-                    <StatusIcon className="mr-1 h-3 w-3" />
-                    {status.label}
-                  </Badge>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pending">Pendiente</SelectItem>
-                  <SelectItem value="in_progress">En Progreso</SelectItem>
-                  <SelectItem value="completed">Completada</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={task.priority} onValueChange={handlePriorityChange}>
-                <SelectTrigger className="w-auto h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Prioridad Baja</SelectItem>
-                  <SelectItem value="medium">Prioridad Media</SelectItem>
-                  <SelectItem value="high">Prioridad Alta</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={task.category_id || 'none'} onValueChange={handleCategoryChange}>
-                <SelectTrigger className="w-auto h-8 text-xs">
-                  <SelectValue placeholder="Sin categoria" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sin categoria</SelectItem>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
-                        {cat.name}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <FieldLabel>Tipo</FieldLabel>
+                <Select value={task.type ?? 'task'} onValueChange={(v) => handleTypeChange(v as TaskType)}>
+                  <SelectTrigger className="h-9 w-full bg-background text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {typeOrder.map((t) => {
+                      const Icon = typeConfig[t].icon
+                      return (
+                        <SelectItem key={t} value={t}>
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-3.5 w-3.5" />
+                            {typeConfig[t].label}
+                          </div>
+                        </SelectItem>
+                      )
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <FieldLabel>Categoría</FieldLabel>
+                <Select value={task.category_id || 'none'} onValueChange={handleCategoryChange}>
+                  <SelectTrigger className="h-9 w-full bg-background text-sm">
+                    <SelectValue placeholder="Sin categoría" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin categoría</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        <div className="flex items-center gap-2">
+                          <div className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
+                          {cat.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </SheetHeader>
 
-          <div className="space-y-6">
+          <div className="space-y-8 p-6">
             {/* Subtasks */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">
-                  Subtareas {task.subtasks.length > 0 && `(${completedSubtasks}/${task.subtasks.length})`}
-                </h3>
-              </div>
+            <section className="space-y-3">
+              <SectionTitle
+                icon={ListChecks}
+                count={task.subtasks.length > 0 ? `${completedSubtasks}/${task.subtasks.length}` : undefined}
+              >
+                Subtareas
+              </SectionTitle>
               {task.subtasks.length > 0 && (
-                <div className="rounded-lg border border-border/50 divide-y divide-border/50">
+                <Progress value={subtaskProgress} className="h-1.5" />
+              )}
+              {task.subtasks.length > 0 && (
+                <div className="divide-y divide-border/50 overflow-hidden rounded-lg border border-border/50">
                   {task.subtasks.map((subtask) => (
-                    <div key={subtask.id} className="flex items-center gap-3 p-3 group">
+                    <div key={subtask.id} className="group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30">
                       <Checkbox
                         checked={subtask.completed}
                         onCheckedChange={() => handleToggleSubtask(subtask)}
                       />
-                      <span className={`flex-1 text-sm ${subtask.completed ? 'line-through text-muted-foreground' : ''}`}>
+                      <span className={`flex-1 text-sm ${subtask.completed ? 'text-muted-foreground line-through' : ''}`}>
                         {subtask.title}
                       </span>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                        className="h-7 w-7 text-muted-foreground opacity-100 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100"
                         onClick={() => handleDeleteSubtask(subtask.id)}
+                        aria-label="Eliminar subtarea"
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -347,88 +611,91 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                   onChange={(e) => setNewSubtask(e.target.value)}
                   className="h-9"
                 />
-                <Button type="submit" size="sm" variant="secondary">
+                <Button type="submit" size="sm" variant="secondary" disabled={!newSubtask.trim()}>
                   <Plus className="h-4 w-4" />
                 </Button>
               </form>
-            </div>
+            </section>
 
             {/* Attachments */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">
-                  Archivos {task.attachments.length > 0 && `(${task.attachments.length})`}
-                </h3>
-                <div className="flex gap-2">
-                  <Input
-                    type="url"
-                    placeholder="https://i.imgur.com/ejemplo.png"
-                    value={imageUrlInput}
-                    onChange={(e) => setImageUrlInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddUrl() } }}
-                    className="h-9"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddUrl}
-                    disabled={addingUrl || !imageUrlInput.trim()}
-                  >
-                    {addingUrl ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Link className="mr-2 h-4 w-4" />
-                        Añadir
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-              {uploadError && (
-                <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {uploadError}
-                </div>
-              )}
-              {task.attachments.length > 0 && (
-                <div className="grid gap-2">
-                  {task.attachments.map((attachment) => (
+            <section className="space-y-3">
+              <SectionTitle
+                icon={Paperclip}
+                count={task.attachments.length > 0 ? String(task.attachments.length) : undefined}
+              >
+                Archivos
+              </SectionTitle>
+
+              {imageAttachments.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {imageAttachments.map((attachment, i) => (
                     <div
                       key={attachment.id}
-                      className="flex items-center gap-3 rounded-lg border border-border/50 p-3 group"
+                      className="group relative aspect-video overflow-hidden rounded-lg border border-border/50 bg-muted"
                     >
-                      {isImage(attachment.file_type) ? (
-                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center overflow-hidden">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <button
+                        type="button"
+                        onClick={() => setLightboxIndex(i)}
+                        className="block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={`Ampliar ${attachment.file_name}`}
+                      >
+                        {brokenImages.has(attachment.id) ? (
+                          <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
+                            <ImageOff className="h-5 w-5" />
+                            <span className="text-[11px]">No se puede cargar</span>
+                          </div>
+                        ) : (
+                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={fileUrl(attachment.file_path)}
                             alt={attachment.file_name}
-                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            onError={() => setBrokenImages((prev) => new Set(prev).add(attachment.id))}
+                            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                           />
-                        </div>
-                      ) : isVideo(attachment.file_type) ? (
-                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                        )}
+                        <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100">
+                          <Maximize2 className="h-5 w-5 text-white" />
+                        </span>
+                      </button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="icon"
+                        className="absolute right-1.5 top-1.5 h-7 w-7 bg-background/80 text-destructive opacity-100 backdrop-blur hover:bg-background hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100"
+                        onClick={() => handleDeleteAttachment(attachment)}
+                        aria-label={`Eliminar ${attachment.file_name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {otherAttachments.length > 0 && (
+                <div className="grid gap-2">
+                  {otherAttachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="group flex items-center gap-3 rounded-lg border border-border/50 p-3 transition-colors hover:bg-muted/30"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+                        {isVideo(attachment.file_type) ? (
                           <Video className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      ) : isArchive(attachment.file_type) ? (
-                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                        ) : isArchive(attachment.file_type) ? (
                           <FileArchive className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      ) : (
-                        <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                        ) : (
                           <FileText className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{attachment.file_name}</p>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{attachment.file_name}</p>
                         <p className="text-xs text-muted-foreground">{formatFileSize(attachment.file_size)}</p>
                       </div>
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                      <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
                         <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-                          <a
-                            href={fileUrl(attachment.file_path)}
-                            download={attachment.file_name}
-                          >
+                          <a href={fileUrl(attachment.file_path)} download={attachment.file_name} aria-label="Descargar">
                             <Download className="h-4 w-4" />
                           </a>
                         </Button>
@@ -437,6 +704,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           onClick={() => handleDeleteAttachment(attachment)}
+                          aria-label="Eliminar archivo"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -445,110 +713,227 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                   ))}
                 </div>
               )}
-              {task.attachments.filter((a) => isImage(a.file_type)).length > 0 && (
-                <div className="grid grid-cols-2 gap-2 pt-2">
-                  {task.attachments
-                    .filter((a) => isImage(a.file_type))
-                    .map((attachment) => (
-                      <a
-                        key={attachment.id}
-                        href={fileUrl(attachment.file_path)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-lg overflow-hidden border border-border/50 hover:border-primary/50 transition-colors"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={fileUrl(attachment.file_path)}
-                          alt={attachment.file_name}
-                          className="w-full h-32 object-cover"
-                        />
-                      </a>
-                    ))}
+
+              {task.attachments.length === 0 && (
+                <p className="rounded-lg border border-dashed border-border/60 px-3 py-4 text-center text-sm text-muted-foreground">
+                  Aún no hay archivos. Pega el enlace de una imagen para añadirla.
+                </p>
+              )}
+
+              {uploadError && (
+                <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {uploadError}
                 </div>
               )}
-            </div>
+
+              <div className="flex gap-2">
+                <Input
+                  type="url"
+                  placeholder="https://i.imgur.com/ejemplo.png"
+                  value={imageUrlInput}
+                  onChange={(e) => setImageUrlInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddUrl() } }}
+                  className="h-9"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddUrl}
+                  disabled={addingUrl || !imageUrlInput.trim()}
+                >
+                  {addingUrl ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Link className="mr-2 h-4 w-4" />
+                      Añadir
+                    </>
+                  )}
+                </Button>
+              </div>
+            </section>
 
             {/* Comments */}
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">
-                Comentarios {task.comments.length > 0 && `(${task.comments.length})`}
-              </h3>
+            <section className="space-y-3">
+              <SectionTitle
+                icon={MessageSquare}
+                count={task.comments.length > 0 ? String(task.comments.length) : undefined}
+              >
+                Comentarios
+              </SectionTitle>
+
+              {task.comments.length === 0 && (
+                <p className="rounded-lg border border-dashed border-border/60 px-3 py-4 text-center text-sm text-muted-foreground">
+                  Todavía no hay comentarios. Sé el primero en escribir.
+                </p>
+              )}
+
               {task.comments.length > 0 && (
-                <div className="space-y-3">
-                  {task.comments.map((comment) => (
-                    <div key={comment.id} className="group/comment flex gap-3 rounded-lg p-2 transition-colors hover:bg-muted/30">
-                      <Avatar className="h-8 w-8 shrink-0">
-                        <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                          {authorName(comment.profile ?? profileById(comment.user_id))[0]?.toUpperCase() || 'U'}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium">
-                              {authorName(comment.profile ?? profileById(comment.user_id))}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: es })}
-                            </span>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            className="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover/comment:opacity-100"
-                            onClick={() => handleDeleteComment(comment.id)}
-                            disabled={deletingCommentId === comment.id}
-                          >
-                            {deletingCommentId === comment.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
+                <div className="space-y-2.5">
+                  {task.comments.map((comment) => {
+                    const commentAuthor = comment.profile ?? profileById(comment.user_id)
+                    const isOwn = !!currentUserId && comment.user_id === currentUserId
+                    const isEditing = editingCommentId === comment.id
+                    const wasEdited = !!comment.edited_at
+
+                    return (
+                      <div
+                        key={comment.id}
+                        className={`group/comment flex gap-3 rounded-xl border p-3 transition-colors ${
+                          isOwn ? 'border-primary/20 bg-primary/5' : 'border-border/50 bg-muted/20 hover:bg-muted/30'
+                        }`}
+                      >
+                        <Avatar className="h-8 w-8 shrink-0">
+                          <AvatarFallback className="bg-primary/10 text-xs text-primary">
+                            {authorName(commentAuthor)[0]?.toUpperCase() || 'U'}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <span className="text-sm font-medium">{authorName(commentAuthor)}</span>
+                              <span className="text-xs text-muted-foreground">{timeAgo(comment.created_at)}</span>
+                              {wasEdited && (
+                                <span
+                                  className="text-xs italic text-muted-foreground"
+                                  title={`Editado ${timeAgo(comment.edited_at as string)}`}
+                                >
+                                  (editado)
+                                </span>
+                              )}
+                            </div>
+                            {isOwn && !isEditing && (
+                              <div className="flex shrink-0 items-center opacity-100 transition-opacity sm:opacity-0 sm:group-hover/comment:opacity-100 sm:focus-within:opacity-100">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  onClick={() => startEditComment(comment.id, comment.content)}
+                                  aria-label="Editar comentario"
+                                  title="Editar"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                  onClick={() => handleDeleteComment(comment.id)}
+                                  disabled={deletingCommentId === comment.id}
+                                  aria-label="Eliminar comentario"
+                                  title="Eliminar"
+                                >
+                                  {deletingCommentId === comment.id ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              </div>
                             )}
-                          </Button>
+                          </div>
+
+                          {isEditing ? (
+                            <div className="space-y-2">
+                              <Textarea
+                                value={editText}
+                                onChange={(e) => setEditText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape') { e.preventDefault(); cancelEditComment() }
+                                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                                    e.preventDefault()
+                                    handleSaveComment(comment.id, comment.content)
+                                  }
+                                }}
+                                rows={3}
+                                autoFocus
+                                className="resize-none bg-background text-sm"
+                              />
+                              {editError && <p className="text-xs text-destructive">{editError}</p>}
+                              <div className="flex items-center justify-end gap-2">
+                                <span className="mr-auto hidden text-[11px] text-muted-foreground sm:inline">
+                                  Esc para cancelar · Ctrl+Enter para guardar
+                                </span>
+                                <Button type="button" size="sm" variant="ghost" onClick={cancelEditComment} disabled={savingEdit}>
+                                  Cancelar
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleSaveComment(comment.id, comment.content)}
+                                  disabled={savingEdit || !editText.trim()}
+                                >
+                                  {savingEdit ? (
+                                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="mr-1.5 h-3.5 w-3.5" />
+                                  )}
+                                  Guardar
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/85">
+                              {comment.content}
+                            </p>
+                          )}
                         </div>
-                        <p className="text-sm text-muted-foreground">{comment.content}</p>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
-              <form onSubmit={handleAddComment} className="flex gap-2">
+
+              <form onSubmit={handleAddComment} className="flex gap-2 pt-1">
                 <Textarea
                   placeholder="Escribe un comentario..."
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault()
+                      handleAddComment()
+                    }
+                  }}
                   rows={2}
                   className="resize-none"
                 />
-                <Button type="submit" size="icon" className="shrink-0 self-end">
-                  <Send className="h-4 w-4" />
+                <Button type="submit" size="icon" className="shrink-0 self-end" disabled={!newComment.trim() || sendingComment}>
+                  {sendingComment ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
               </form>
-            </div>
+            </section>
 
             {/* Delete Task */}
-            <div className="pt-4 border-t border-border/50">
+            <div className="border-t border-border/50 pt-4">
               <Button
                 variant="outline"
-                className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => setDeleteConfirm(true)}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
-                Eliminar Tarea
+                Eliminar tarea
               </Button>
             </div>
           </div>
         </SheetContent>
       </Sheet>
 
+      <ImageLightbox
+        images={lightboxImages}
+        index={lightboxIndex}
+        onIndexChange={setLightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+      />
+
       <AlertDialog open={deleteConfirm} onOpenChange={setDeleteConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminar tarea</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta accion no se puede deshacer. Se eliminaran todos los comentarios, subtareas y archivos adjuntos.
+              Esta acción no se puede deshacer. Se eliminarán todos los comentarios, subtareas y archivos adjuntos.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
