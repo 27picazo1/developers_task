@@ -9,12 +9,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Progress } from '@/components/ui/progress'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
 import {
@@ -52,6 +50,7 @@ import {
   ExternalLink,
   FileArchive,
   FileText,
+  Globe,
   ImageOff,
   Link,
   ListChecks,
@@ -91,7 +90,129 @@ const priorityConfig = {
   high: { label: 'Alta', dot: 'bg-red-400' },
 }
 
+// Degradado y brillo de la portada según el tipo de tarea.
+const typeHero: Record<TaskType, { gradient: string; glow: string }> = {
+  bug: { gradient: 'from-red-500/35 via-red-500/10 to-transparent', glow: 'bg-red-500/30' },
+  idea: { gradient: 'from-yellow-500/35 via-yellow-500/10 to-transparent', glow: 'bg-yellow-500/30' },
+  improvement: { gradient: 'from-violet-500/35 via-violet-500/10 to-transparent', glow: 'bg-violet-500/30' },
+  task: { gradient: 'from-sky-500/35 via-sky-500/10 to-transparent', glow: 'bg-sky-500/30' },
+}
+
+const statusActive: Record<TaskStatus, string> = {
+  pending: 'bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/40',
+  in_progress: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40',
+  completed: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40',
+}
+
+const priorityActive: Record<TaskPriority, string> = {
+  low: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40',
+  medium: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/40',
+  high: 'bg-red-500/15 text-red-300 ring-1 ring-red-500/40',
+}
+
 const timeAgo = (date: string) => formatDistanceToNow(new Date(date), { addSuffix: true, locale: es })
+
+const fileExt = (name: string) => {
+  const ext = name.includes('.') ? name.split('.').pop() ?? '' : ''
+  return ext.slice(0, 4).toUpperCase() || 'FILE'
+}
+
+const URL_SPLIT = /(https?:\/\/[^\s]+)/g
+const IS_URL = /^https?:\/\//
+
+function Linkified({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(URL_SPLIT).map((part, i) =>
+        IS_URL.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="break-all text-sky-400 underline-offset-2 hover:underline"
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  )
+}
+
+function LinkCard({ url }: { url: string }) {
+  let host = url
+  let rest = ''
+  try {
+    const u = new URL(url)
+    host = u.hostname.replace(/^www\./, '')
+    rest = `${u.pathname}${u.search}`.replace(/^\/$/, '')
+  } catch {
+    // URL no válida: se muestra tal cual
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group flex items-center gap-3 rounded-2xl border border-border/60 bg-card/50 p-3 transition hover:border-sky-500/50 hover:bg-card"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500/30 to-sky-500/5 text-sky-300 ring-1 ring-sky-500/30">
+        <Globe className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold">{host}</p>
+        {rest && <p className="truncate text-xs text-muted-foreground">{rest}</p>}
+      </div>
+      <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:text-sky-300" />
+    </a>
+  )
+}
+
+function Segmented<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: T
+  onChange: (value: T) => void
+  options: { value: T; label: string; icon: React.ReactNode; activeClass: string }[]
+}) {
+  return (
+    <div className="space-y-1.5">
+      <FieldLabel>{label}</FieldLabel>
+      <div
+        role="radiogroup"
+        aria-label={label}
+        className="grid gap-1 rounded-xl bg-muted/50 p-1"
+        style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+      >
+        {options.map((o) => {
+          const active = o.value === value
+          return (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => { if (!active) onChange(o.value) }}
+              className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-medium transition-all ${
+                active ? `${o.activeClass} shadow-sm` : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+              }`}
+            >
+              {o.icon}
+              <span className="truncate">{o.label}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{children}</span>
@@ -107,11 +228,13 @@ function SectionTitle({
   count?: string
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <Icon className="h-4 w-4 text-muted-foreground" />
-      <h3 className="text-sm font-semibold">{children}</h3>
+    <div className="flex items-center gap-2.5">
+      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted text-foreground/80">
+        <Icon className="h-4 w-4" />
+      </span>
+      <h3 className="text-base font-semibold tracking-tight">{children}</h3>
       {count && (
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{count}</span>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{count}</span>
       )}
     </div>
   )
@@ -452,21 +575,55 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
     name: a.file_name,
     src: fileUrl(a.file_path),
   }))
+  const coverImage = imageAttachments.find((a) => !brokenImages.has(a.id))
+  const hero = typeHero[task.type ?? 'task'] ?? typeHero.task
+  const category = categories.find((c) => c.id === task.category_id)
+  const descriptionIsLink = !!task.description && /^https?:\/\/\S+$/.test(task.description.trim())
 
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="w-full gap-0 overflow-y-auto p-0 sm:max-w-xl">
-          <SheetHeader className="gap-0 space-y-5 border-b border-border/60 bg-muted/20 p-6 pr-12">
-            <div className="space-y-3">
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${taskType.className}`}>
-                <TypeIcon className="h-3 w-3" />
-                {taskType.label}
-              </span>
-              <SheetTitle className="text-2xl leading-tight text-pretty">{task.title}</SheetTitle>
+        <SheetContent className="w-full gap-0 overflow-y-auto p-0 sm:max-w-xl [&>button]:z-20 [&>button]:rounded-full [&>button]:bg-background/70 [&>button]:p-2 [&>button]:opacity-100 [&>button]:backdrop-blur [&>button]:hover:bg-background">
+          {/* Hero: portada con la primera imagen o degradado según el tipo */}
+          <div className="relative isolate overflow-hidden border-b border-border/60">
+            {coverImage ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={fileUrl(coverImage.file_path)}
+                  alt=""
+                  aria-hidden="true"
+                  onError={() => setBrokenImages((prev) => new Set(prev).add(coverImage.id))}
+                  className="absolute inset-0 -z-20 h-full w-full object-cover"
+                />
+                <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background via-background/80 to-background/10" />
+              </>
+            ) : (
+              <>
+                <div className={`absolute inset-0 -z-20 bg-gradient-to-br ${hero.gradient}`} />
+                <div className={`absolute -right-12 -top-12 -z-10 h-52 w-52 rounded-full blur-3xl ${hero.glow}`} />
+                <TypeIcon className="absolute -right-4 top-8 -z-10 h-40 w-40 -rotate-12 text-foreground/[0.06]" />
+                <div className="absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-t from-background to-transparent" />
+              </>
+            )}
+
+            <div className="space-y-4 p-6 pr-14 pt-28">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium backdrop-blur ${taskType.className}`}>
+                  <TypeIcon className="h-3 w-3" />
+                  {taskType.label}
+                </span>
+                {category && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-xs font-medium backdrop-blur">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: category.color }} />
+                    {category.name}
+                  </span>
+                )}
+              </div>
+              <SheetTitle className="text-3xl font-bold leading-tight tracking-tight text-pretty">{task.title}</SheetTitle>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Avatar className="h-5 w-5">
-                  <AvatarFallback className="bg-primary/10 text-[10px] text-primary">
+                <Avatar className="h-6 w-6 ring-2 ring-background">
+                  <AvatarFallback className="bg-muted text-[10px] font-semibold text-foreground">
                     {authorName(author)[0]?.toUpperCase() || 'U'}
                   </AvatarFallback>
                 </Avatar>
@@ -475,102 +632,93 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                 </span>
               </div>
             </div>
-
-            {task.description && (
-              <p className="whitespace-pre-wrap rounded-lg border border-border/50 bg-background/60 p-3 text-sm leading-relaxed text-foreground/80">
-                {task.description}
-              </p>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <FieldLabel>Estado</FieldLabel>
-                <Select value={task.status} onValueChange={(v) => handleStatusChange(v as TaskStatus)}>
-                  <SelectTrigger className="h-9 w-full bg-background text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(statusConfig) as TaskStatus[]).map((s) => {
-                      const Icon = statusConfig[s].icon
-                      return (
-                        <SelectItem key={s} value={s}>
-                          <div className="flex items-center gap-2">
-                            <Icon className={`h-3.5 w-3.5 ${statusConfig[s].iconClass}`} />
-                            {statusConfig[s].label}
-                          </div>
-                        </SelectItem>
-                      )
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <FieldLabel>Prioridad</FieldLabel>
-                <Select value={task.priority} onValueChange={(v) => handlePriorityChange(v as TaskPriority)}>
-                  <SelectTrigger className="h-9 w-full bg-background text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(priorityConfig) as TaskPriority[]).map((p) => (
-                      <SelectItem key={p} value={p}>
-                        <div className="flex items-center gap-2">
-                          <span className={`h-2.5 w-2.5 rounded-full ${priorityConfig[p].dot}`} />
-                          {priorityConfig[p].label}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <FieldLabel>Tipo</FieldLabel>
-                <Select value={task.type ?? 'task'} onValueChange={(v) => handleTypeChange(v as TaskType)}>
-                  <SelectTrigger className="h-9 w-full bg-background text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {typeOrder.map((t) => {
-                      const Icon = typeConfig[t].icon
-                      return (
-                        <SelectItem key={t} value={t}>
-                          <div className="flex items-center gap-2">
-                            <Icon className="h-3.5 w-3.5" />
-                            {typeConfig[t].label}
-                          </div>
-                        </SelectItem>
-                      )
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <FieldLabel>Categoría</FieldLabel>
-                <Select value={task.category_id || 'none'} onValueChange={handleCategoryChange}>
-                  <SelectTrigger className="h-9 w-full bg-background text-sm">
-                    <SelectValue placeholder="Sin categoría" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sin categoría</SelectItem>
-                    {categories.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        <div className="flex items-center gap-2">
-                          <div className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
-                          {cat.name}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </SheetHeader>
+          </div>
 
           <div className="space-y-8 p-6">
+            {/* Descripción */}
+            {task.description && (
+              descriptionIsLink ? (
+                <LinkCard url={task.description.trim()} />
+              ) : (
+                <p className="whitespace-pre-wrap rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm leading-relaxed text-foreground/85">
+                  <Linkified text={task.description} />
+                </p>
+              )
+            )}
+
+            {/* Propiedades */}
+            <div className="space-y-4 rounded-2xl border border-border/60 bg-card/40 p-4">
+              <Segmented<TaskStatus>
+                label="Estado"
+                value={task.status}
+                onChange={handleStatusChange}
+                options={(Object.keys(statusConfig) as TaskStatus[]).map((s) => {
+                  const Icon = statusConfig[s].icon
+                  return {
+                    value: s,
+                    label: statusConfig[s].label,
+                    icon: <Icon className="h-3.5 w-3.5 shrink-0" />,
+                    activeClass: statusActive[s],
+                  }
+                })}
+              />
+              <Segmented<TaskPriority>
+                label="Prioridad"
+                value={task.priority}
+                onChange={handlePriorityChange}
+                options={(Object.keys(priorityConfig) as TaskPriority[]).map((p) => ({
+                  value: p,
+                  label: priorityConfig[p].label,
+                  icon: <span className={`h-2 w-2 shrink-0 rounded-full ${priorityConfig[p].dot}`} />,
+                  activeClass: priorityActive[p],
+                }))}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <FieldLabel>Tipo</FieldLabel>
+                  <Select value={task.type ?? 'task'} onValueChange={(v) => handleTypeChange(v as TaskType)}>
+                    <SelectTrigger className="h-9 w-full bg-background text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {typeOrder.map((t) => {
+                        const Icon = typeConfig[t].icon
+                        return (
+                          <SelectItem key={t} value={t}>
+                            <div className="flex items-center gap-2">
+                              <Icon className="h-3.5 w-3.5" />
+                              {typeConfig[t].label}
+                            </div>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel>Categoría</FieldLabel>
+                  <Select value={task.category_id || 'none'} onValueChange={handleCategoryChange}>
+                    <SelectTrigger className="h-9 w-full bg-background text-sm">
+                      <SelectValue placeholder="Sin categoría" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin categoría</SelectItem>
+                      {categories.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          <div className="flex items-center gap-2">
+                            <div className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
+                            {cat.name}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
             {/* Subtasks */}
-            <section className="space-y-3">
+            <section className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <SectionTitle
                 icon={ListChecks}
                 count={task.subtasks.length > 0 ? `${completedSubtasks}/${task.subtasks.length}` : undefined}
@@ -578,10 +726,25 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                 Subtareas
               </SectionTitle>
               {task.subtasks.length > 0 && (
-                <Progress value={subtaskProgress} className="h-1.5" />
+                <div className="space-y-1.5">
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-sky-400 to-emerald-400 transition-all duration-500"
+                      style={{ width: `${subtaskProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {subtaskProgress === 100 ? '¡Todo completado! 🎉' : `${subtaskProgress}% completado`}
+                  </p>
+                </div>
+              )}
+              {task.subtasks.length === 0 && (
+                <p className="rounded-xl border border-dashed border-border/60 px-3 py-4 text-center text-sm text-muted-foreground">
+                  Divide la tarea en pasos pequeños para seguir el avance.
+                </p>
               )}
               {task.subtasks.length > 0 && (
-                <div className="divide-y divide-border/50 overflow-hidden rounded-lg border border-border/50">
+                <div className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/50">
                   {task.subtasks.map((subtask) => (
                     <div key={subtask.id} className="group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30">
                       <Checkbox
@@ -618,7 +781,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
             </section>
 
             {/* Attachments */}
-            <section className="space-y-3">
+            <section className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <SectionTitle
                 icon={Paperclip}
                 count={task.attachments.length > 0 ? String(task.attachments.length) : undefined}
@@ -631,7 +794,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                   {imageAttachments.map((attachment, i) => (
                     <div
                       key={attachment.id}
-                      className="group relative aspect-video overflow-hidden rounded-lg border border-border/50 bg-muted"
+                      className="group relative aspect-video overflow-hidden rounded-xl border border-border/50 bg-muted shadow-sm"
                     >
                       <button
                         type="button"
@@ -657,6 +820,9 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                         <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100">
                           <Maximize2 className="h-5 w-5 text-white" />
                         </span>
+                        <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-6 text-left text-[11px] text-white opacity-0 transition group-hover:opacity-100">
+                          {attachment.file_name}
+                        </span>
                       </button>
                       <Button
                         type="button"
@@ -678,25 +844,30 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                   {otherAttachments.map((attachment) => (
                     <div
                       key={attachment.id}
-                      className="group flex items-center gap-3 rounded-lg border border-border/50 p-3 transition-colors hover:bg-muted/30"
+                      className="group flex items-center gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 transition-colors hover:border-border hover:bg-card/70"
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+                      <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/30 to-sky-500/10 ring-1 ring-violet-500/30">
                         {isVideo(attachment.file_type) ? (
-                          <Video className="h-5 w-5 text-muted-foreground" />
+                          <Video className="h-5 w-5 text-violet-200" />
                         ) : isArchive(attachment.file_type) ? (
-                          <FileArchive className="h-5 w-5 text-muted-foreground" />
+                          <FileArchive className="h-5 w-5 text-violet-200" />
                         ) : (
-                          <FileText className="h-5 w-5 text-muted-foreground" />
+                          <FileText className="h-5 w-5 text-violet-200" />
                         )}
+                        <span className="absolute -bottom-1.5 rounded bg-violet-500 px-1 text-[9px] font-bold leading-4 text-white">
+                          {fileExt(attachment.file_name)}
+                        </span>
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">{attachment.file_name}</p>
                         <p className="text-xs text-muted-foreground">{formatFileSize(attachment.file_size)}</p>
                       </div>
-                      <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-                          <a href={fileUrl(attachment.file_path)} download={attachment.file_name} aria-label="Descargar">
+                      <div className="flex items-center gap-1">
+                        <Button variant="secondary" size="sm" className="h-8 gap-1.5" asChild>
+                          <a href={fileUrl(attachment.file_path)} download={attachment.file_name}>
                             <Download className="h-4 w-4" />
+                            <span className="hidden sm:inline">Descargar</span>
+                            <span className="sr-only sm:hidden">Descargar</span>
                           </a>
                         </Button>
                         <Button
@@ -754,7 +925,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
             </section>
 
             {/* Comments */}
-            <section className="space-y-3">
+            <section className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <SectionTitle
                 icon={MessageSquare}
                 count={task.comments.length > 0 ? String(task.comments.length) : undefined}
