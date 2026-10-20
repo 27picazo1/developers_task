@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { AccessCredential, Profile } from '@/lib/types'
+import type { AccessCredential, Profile, WorkspaceMember } from '@/lib/types'
 import { authorName } from '@/components/task-card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -31,8 +32,10 @@ import {
   Loader2,
   Plus,
   ShieldCheck,
+  User,
+  Users,
 } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
 interface CredentialsDialogProps {
@@ -40,13 +43,15 @@ interface CredentialsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-const DURATIONS = [
+// Atajos: rellenan el campo de tiempo, que también se puede escribir a mano.
+const QUICK_DURATIONS = [
   { hours: 1, label: '1 hora' },
-  { hours: 24, label: '24 horas' },
+  { hours: 24, label: '1 día' },
   { hours: 72, label: '3 días' },
   { hours: 168, label: '7 días' },
   { hours: 720, label: '30 días' },
 ]
+const MAX_HOURS = 8760 // 365 días
 
 const timeAgo = (date: string) => formatDistanceToNow(new Date(date), { addSuffix: true, locale: es })
 
@@ -67,16 +72,27 @@ function credentialState(c: AccessCredential) {
         return { label: 'Acceso caducado', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' }
       }
     }
-    return { label: 'En uso', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
+    return { label: 'Usada', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' }
   }
   return { label: 'Disponible', className: 'border-sky-500/30 bg-sky-500/10 text-sky-300' }
+}
+
+const formatDate = (date: string | number | Date) => format(new Date(date), "d MMM yyyy, HH:mm", { locale: es })
+
+// Hasta cuándo dura el acceso que dio una credencial ya canjeada.
+function accessUntilText(c: AccessCredential) {
+  if (!c.redeemed_at) return ''
+  if (c.kind === 'permanent' || !c.duration_hours) return 'acceso permanente'
+  const until = new Date(c.redeemed_at).getTime() + c.duration_hours * 3600000
+  return until <= Date.now() ? `acceso caducado el ${formatDate(until)}` : `acceso hasta el ${formatDate(until)}`
 }
 
 export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps) {
   const supabase = useMemo(() => createClient(), [])
 
   const [kind, setKind] = useState<'permanent' | 'temporary'>('temporary')
-  const [hours, setHours] = useState('168')
+  const [amount, setAmount] = useState('7')
+  const [unit, setUnit] = useState<'hours' | 'days'>('days')
   const [note, setNote] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -84,6 +100,7 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
 
   const [credentials, setCredentials] = useState<AccessCredential[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [loading, setLoading] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
@@ -91,13 +108,15 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: creds, error: credsError }, { data: profs }] = await Promise.all([
+    const [{ data: creds, error: credsError }, { data: profs }, { data: mems }] = await Promise.all([
       supabase.from('access_credentials').select('*').order('created_at', { ascending: false }),
       supabase.from('profiles').select('*'),
+      supabase.from('workspace_members').select('*'),
     ])
     if (credsError) setError(credsError.message)
     setCredentials((creds as AccessCredential[] | null) ?? [])
     setProfiles((profs as Profile[] | null) ?? [])
+    setMembers((mems as WorkspaceMember[] | null) ?? [])
     setLoading(false)
   }, [supabase])
 
@@ -127,14 +146,25 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
     }
   }
 
+  const applyQuick = (h: number) => {
+    if (h % 24 === 0) {
+      setAmount(String(h / 24))
+      setUnit('days')
+    } else {
+      setAmount(String(h))
+      setUnit('hours')
+    }
+  }
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (kind === 'temporary' && durationInvalid) return
     setCreating(true)
     setError(null)
 
     const { data, error } = await supabase.rpc('create_access_credential', {
       p_kind: kind,
-      p_hours: kind === 'temporary' ? Number(hours) : null,
+      p_hours: kind === 'temporary' ? totalHours : null,
       p_note: note.trim() || null,
     })
 
@@ -163,6 +193,27 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
     await load()
   }
 
+  // Tiempo que escribe el admin, convertido a horas y validado (1 hora a 365 días).
+  const amountNumber = Number(amount)
+  const totalHours =
+    amount.trim() !== '' && Number.isInteger(amountNumber) && amountNumber >= 1
+      ? amountNumber * (unit === 'days' ? 24 : 1)
+      : NaN
+  const durationInvalid = !Number.isFinite(totalHours) || totalHours < 1 || totalHours > MAX_HOURS
+  const durationError =
+    durationInvalid && amount.trim() !== '' ? 'Introduce un número entero entre 1 hora y 365 días.' : null
+
+  const people = useMemo(() => {
+    const byUser = new Map(members.map((m) => [m.user_id, m]))
+    const rank = (m: WorkspaceMember | null) => (m?.role === 'admin' ? 0 : m ? 1 : 2)
+    return profiles
+      .map((profile) => ({ profile, member: byUser.get(profile.id) ?? null }))
+      .sort((a, b) => rank(a.member) - rank(b.member) || authorName(a.profile).localeCompare(authorName(b.profile)))
+  }, [members, profiles])
+  const adminCount = people.filter((p) => p.member?.role === 'admin').length
+  const userCount = people.filter((p) => p.member && p.member.role !== 'admin').length
+  const pendingCount = people.filter((p) => !p.member).length
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] gap-5 overflow-y-auto sm:max-w-2xl">
@@ -174,7 +225,7 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
             Credenciales de acceso
           </DialogTitle>
           <DialogDescription>
-            Genera un código de un solo uso para cada persona. Tendrá que introducirlo después de registrarse.
+            Genera un código de un solo uso para cada persona, con el tiempo de acceso que tú decidas. En cuanto lo introduce, deja de valer.
           </DialogDescription>
         </DialogHeader>
 
@@ -185,6 +236,22 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
           </div>
         )}
 
+        <Tabs defaultValue="credenciales" className="gap-5">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="credenciales" className="gap-1.5">
+              <KeyRound className="h-3.5 w-3.5" />
+              Credenciales
+            </TabsTrigger>
+            <TabsTrigger value="personas" className="gap-1.5">
+              <Users className="h-3.5 w-3.5" />
+              Personas
+              {people.length > 0 && (
+                <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">{people.length}</span>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="credenciales" className="space-y-5">
         {/* Nueva credencial */}
         <form onSubmit={handleCreate} className="space-y-4 rounded-2xl border border-border/60 bg-card/40 p-4">
           <div className="space-y-1.5">
@@ -223,25 +290,47 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
 
           <div className="grid gap-3 sm:grid-cols-2">
             {kind === 'temporary' && (
-              <div className="space-y-1.5">
-                <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Duración del acceso
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="credential-amount" className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Tiempo de acceso
                 </Label>
-                <Select value={hours} onValueChange={setHours}>
-                  <SelectTrigger className="h-9 w-full bg-background text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DURATIONS.map((d) => (
-                      <SelectItem key={d.hours} value={String(d.hours)}>
-                        {d.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-2">
+                  <Input
+                    id="credential-amount"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="h-9 w-28 bg-background"
+                  />
+                  <Select value={unit} onValueChange={(v) => setUnit(v as 'hours' | 'days')}>
+                    <SelectTrigger className="h-9 w-32 bg-background text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="hours">Horas</SelectItem>
+                      <SelectItem value="days">Días</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {QUICK_DURATIONS.map((d) => (
+                    <button
+                      key={d.hours}
+                      type="button"
+                      onClick={() => applyQuick(d.hours)}
+                      className="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition hover:border-amber-500/40 hover:text-foreground"
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                {durationError && <p className="text-xs text-destructive">{durationError}</p>}
               </div>
             )}
-            <div className={`space-y-1.5 ${kind === 'permanent' ? 'sm:col-span-2' : ''}`}>
+            <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="credential-note" className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Para quién (opcional)
               </Label>
@@ -258,11 +347,14 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
 
           <p className="text-xs text-muted-foreground">
             {kind === 'temporary'
-              ? `El acceso dura ${formatDuration(Number(hours))} desde que la persona introduce el código. Después tendrá que pedir otra.`
+              ? durationInvalid
+                ? 'Escribe cuánto tiempo tendrá acceso la persona.'
+                : `El acceso dura ${formatDuration(totalHours)} desde que la persona introduce el código. Después tendrá que pedir otra.`
               : 'El acceso no caduca, pero puedes revocarlo cuando quieras.'}
+            {' '}El código solo se puede usar una vez.
           </p>
 
-          <Button type="submit" disabled={creating} className="w-full">
+          <Button type="submit" disabled={creating || (kind === 'temporary' && durationInvalid)} className="w-full">
             {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             Generar credencial
           </Button>
@@ -374,7 +466,7 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
                     <p className="mt-2 text-xs text-muted-foreground">
                       {c.note && <span className="font-medium text-foreground">{c.note} · </span>}
                       Creada {timeAgo(c.created_at)}
-                      {c.redeemed_at && <> · Canjeada por {profileName(c.redeemed_by)} {timeAgo(c.redeemed_at)}</>}
+                      {c.redeemed_at && <> · Canjeada por {profileName(c.redeemed_by)} {timeAgo(c.redeemed_at)} · {accessUntilText(c)}</>}
                     </p>
                   </li>
                 )
@@ -382,6 +474,71 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
             </ul>
           )}
         </div>
+          </TabsContent>
+
+          <TabsContent value="personas" className="space-y-4">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-center">
+                <p className="text-2xl font-bold text-violet-300">{adminCount}</p>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Admin</p>
+              </div>
+              <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-center">
+                <p className="text-2xl font-bold text-sky-300">{userCount}</p>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Usuarios</p>
+              </div>
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-center">
+                <p className="text-2xl font-bold text-amber-300">{pendingCount}</p>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sin acceso</p>
+              </div>
+            </div>
+
+            {loading && people.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cargando...
+              </div>
+            ) : people.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-border/60 px-3 py-6 text-center text-sm text-muted-foreground">
+                Todavía no hay personas registradas.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {people.map(({ profile, member }) => {
+                  const isAdminRole = member?.role === 'admin'
+                  const expired = !!member?.expires_at && new Date(member.expires_at).getTime() <= Date.now()
+                  const role = isAdminRole
+                    ? { label: 'Admin', className: 'border-violet-500/30 bg-violet-500/10 text-violet-300', icon: <ShieldCheck className="h-3 w-3" /> }
+                    : member
+                      ? { label: 'Usuario', className: 'border-sky-500/30 bg-sky-500/10 text-sky-300', icon: <User className="h-3 w-3" /> }
+                      : { label: 'Sin acceso', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300', icon: <AlertCircle className="h-3 w-3" /> }
+                  const access = !member
+                    ? 'Registrado, aún no ha introducido una credencial'
+                    : expired
+                      ? `Acceso caducado el ${formatDate(member.expires_at as string)}`
+                      : member.expires_at
+                        ? `Acceso hasta el ${formatDate(member.expires_at)}`
+                        : 'Acceso permanente'
+                  return (
+                    <li key={profile.id} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card/40 p-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                        {authorName(profile)[0]?.toUpperCase() || 'U'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{authorName(profile)}</p>
+                        <p className="truncate text-xs text-muted-foreground">{profile.email}</p>
+                        <p className={`text-xs ${expired || !member ? 'text-amber-300/90' : 'text-muted-foreground'}`}>{access}</p>
+                      </div>
+                      <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${role.className}`}>
+                        {role.icon}
+                        {role.label}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   )

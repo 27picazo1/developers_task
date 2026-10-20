@@ -80,7 +80,7 @@ export function Header({ profile }: HeaderProps) {
               </Avatar>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuContent align="end" className="w-64">
             <div className="flex items-center gap-2 p-2">
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="bg-primary/10 text-primary text-xs">
@@ -88,7 +88,18 @@ export function Header({ profile }: HeaderProps) {
                 </AvatarFallback>
               </Avatar>
               <div className="flex flex-col">
-                <span className="text-sm font-medium">{profile?.display_name || 'Usuario'}</span>
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  {profile?.display_name || 'Usuario'}
+                  <span
+                    className={`rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${
+                      isAdmin
+                        ? 'border-violet-500/30 bg-violet-500/10 text-violet-300'
+                        : 'border-sky-500/30 bg-sky-500/10 text-sky-300'
+                    }`}
+                  >
+                    {isAdmin ? 'Admin' : 'Usuario'}
+                  </span>
+                </span>
                 <span className="text-xs text-muted-foreground">{profile?.email}</span>
               </div>
             </div>
