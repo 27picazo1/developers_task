@@ -54,7 +54,7 @@ export default function SignUpPage() {
           </div>
           <CardTitle className="text-2xl font-bold">Crear Cuenta</CardTitle>
           <CardDescription>
-            Unete para gestionar tus tareas de desarrollo FiveM
+            Crea tu cuenta. Para entrar necesitarás una credencial que te dé el administrador
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSignUp}>

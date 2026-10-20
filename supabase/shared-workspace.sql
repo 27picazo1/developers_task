@@ -24,6 +24,7 @@ begin
     from pg_policies
     where schemaname = 'public'
       and tablename in ('tasks', 'categories', 'subtasks', 'comments', 'attachments', 'profiles')
+      and policyname <> 'members only'  -- control de acceso por credenciales
   loop
     execute format('drop policy if exists %I on %I.%I', p.policyname, p.schemaname, p.tablename);
   end loop;

@@ -23,6 +23,9 @@ export default function SignUpSuccessPage() {
               Haz clic en el enlace del email para activar tu cuenta
             </span>
           </div>
+          <p className="text-sm text-muted-foreground">
+            Después, inicia sesión e introduce las credenciales de acceso que te haya dado el administrador.
+          </p>
         </CardContent>
         <CardFooter>
           <Button asChild variant="outline" className="w-full">

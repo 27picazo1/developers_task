@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -11,7 +12,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Bookmark, Code2, LogOut, ServerCog, User } from 'lucide-react'
+import { Bookmark, Code2, KeyRound, LogOut, ServerCog, User } from 'lucide-react'
+import { CredentialsDialog } from '@/components/credentials-dialog'
 import type { Profile } from '@/lib/types'
 
 interface HeaderProps {
@@ -20,7 +22,18 @@ interface HeaderProps {
 
 export function Header({ profile }: HeaderProps) {
   const router = useRouter()
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [credentialsOpen, setCredentialsOpen] = useState(false)
+
+  // Solo el administrador ve la opción de generar credenciales.
+  useEffect(() => {
+    let active = true
+    supabase.rpc('is_admin').then(({ data }) => {
+      if (active) setIsAdmin(data === true)
+    })
+    return () => { active = false }
+  }, [supabase])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -57,7 +70,7 @@ export function Header({ profile }: HeaderProps) {
           </nav>
         </div>
 
-        <DropdownMenu>
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="relative h-9 w-9 rounded-full">
               <Avatar className="h-9 w-9">
@@ -84,6 +97,12 @@ export function Header({ profile }: HeaderProps) {
               <User className="mr-2 h-4 w-4" />
               Perfil
             </DropdownMenuItem>
+            {isAdmin && (
+              <DropdownMenuItem onClick={() => setCredentialsOpen(true)}>
+                <KeyRound className="mr-2 h-4 w-4" />
+                Generar credenciales
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
               <LogOut className="mr-2 h-4 w-4" />
@@ -92,6 +111,7 @@ export function Header({ profile }: HeaderProps) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {isAdmin && <CredentialsDialog open={credentialsOpen} onOpenChange={setCredentialsOpen} />}
     </header>
   )
 }

@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { getAccessStatus } from '@/lib/access'
 import { DashboardClient } from './dashboard-client'
 
 export default async function DashboardPage() {
@@ -8,6 +9,12 @@ export default async function DashboardPage() {
 
   if (!user) {
     redirect('/auth/login')
+  }
+
+  // Registrarse no basta: hace falta una credencial de acceso vigente.
+  const access = await getAccessStatus(supabase, user.id)
+  if (!access.isMember) {
+    redirect('/acceso')
   }
 
   // Fetch profile

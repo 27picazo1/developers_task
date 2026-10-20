@@ -42,8 +42,8 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   if (
-    // if the user is not logged in and the dashboard path is accessed, redirect to the login page
-    request.nextUrl.pathname.startsWith('/dashboard') &&
+    // if the user is not logged in and a private path is accessed, redirect to the login page
+    ['/dashboard', '/resources', '/acceso'].some((p) => request.nextUrl.pathname.startsWith(p)) &&
     !user
   ) {
     // no user, potentially respond by redirecting the user to the login page

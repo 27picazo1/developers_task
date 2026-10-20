@@ -9,6 +9,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getAccessStatus } from '@/lib/access'
 
 const s3 = new S3Client({
   region: 'auto',
@@ -36,6 +37,11 @@ export async function POST(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const access = await getAccessStatus(supabase, user.id)
+    if (!access.isMember) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     if (!process.env.R2_BUCKET_NAME) {

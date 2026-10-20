@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getAccessStatus } from '@/lib/access'
 
 export async function POST(request: NextRequest) {
   try {
@@ -8,6 +9,11 @@ export async function POST(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const access = await getAccessStatus(supabase, user.id)
+    if (!access.isMember) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const clientId = process.env.IMGUR_CLIENT_ID
