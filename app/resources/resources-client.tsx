@@ -20,9 +20,10 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Bookmark, Download, Info, ExternalLink, FileText, ImagePlus, Link2, Loader2, Maximize2, Paperclip, Pencil, Plus, Search, Trash2, Video, X } from 'lucide-react'
+import { Bookmark, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, ImagePlus, Link2, ListFilter, Loader2, Lock, Paperclip, Pencil, Plus, Search, Trash2, Video, X } from 'lucide-react'
 
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
+const PAGE_SIZE = 6
 const MAX_RESOURCE_FILE_SIZE = 700 * 1024 * 1024
 
 type ResourceWithAttachments = Resource & { resource_attachments?: ResourceAttachment[] }
@@ -34,6 +35,14 @@ type MultipartUpload = { key: string; uploadId: string; partSize: number }
 type ResourceForm = { title: string; description: string; resource_type: ResourceType; status: ResourceStatus; url: string; download_url: string; tags: string; notes: string }
 
 const emptyForm: ResourceForm = { title: '', description: '', resource_type: 'script', status: 'pending', url: '', download_url: '', tags: '', notes: '' }
+function GithubIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-1.97c-3.2.7-3.87-1.54-3.87-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.69 1.25 3.35.96.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.76.11 3.05.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z" />
+    </svg>
+  )
+}
+
 const imageUrl = (path: string) => path.startsWith('r2/') ? `/api/file?pathname=${encodeURIComponent(path)}` : path
 
 async function postUploadAction<T>(payload: Record<string, unknown>): Promise<T> {
@@ -149,6 +158,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
   const [resources, setResources] = useState(initialResources)
   const [query, setQuery] = useState('')
   const [type, setType] = useState<'all' | ResourceType>('all')
+  const [page, setPage] = useState(1)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<ResourceWithAttachments | null>(null)
   const [form, setForm] = useState<ResourceForm>(emptyForm)
@@ -184,6 +194,10 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
     const haystack = `${item.title} ${item.description ?? ''} ${item.tags.join(' ')}`.toLowerCase()
     return (type === 'all' || item.resource_type === type) && haystack.includes(query.toLowerCase())
   }), [resources, query, type])
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, pageCount)
+  const visible = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const resetEditor = () => {
     previewUrls.current.forEach((url) => URL.revokeObjectURL(url))
@@ -589,12 +603,12 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
   const activeVideos = activeAttachments.filter((attachment) => attachment.file_type === VIDEO_TYPE)
   const activeFiles = activeAttachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type) && attachment.file_type !== VIDEO_TYPE)
 
-  return <div className="min-h-screen bg-background"><Header profile={profile} role={role} /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-    <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="mb-2 flex items-center gap-2 text-primary"><Bookmark className="size-4" /><span className="text-sm font-medium uppercase tracking-wider">Biblioteca privada</span></div><h1 className="text-3xl font-bold tracking-tight">Recursos FiveM</h1><p className="mt-2 text-muted-foreground">{canEdit ? 'Guarda referencias, enlaces y descargas de tus recursos autorizados.' : 'Consulta los recursos y lee su descripción. Las descargas y referencias son solo para administradores.'}</p><p className="mt-3 inline-flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200"><Info className="size-4 shrink-0" /><strong className="font-semibold">Recordatorio:</strong> en los enlaces de GitHub coloca <code className="rounded bg-background/60 px-1.5 py-0.5 font-mono text-xs">git clone https://github.com/usuario/repositorio</code></p></div>
+  return <div className="min-h-screen"><Header profile={profile} role={role} /><main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-6 lg:px-10">
+    <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex-1"><div className="mb-2 flex items-center gap-2 text-primary"><Lock className="size-4" /><span className="text-sm font-medium uppercase tracking-wider">Biblioteca privada</span></div><h1 className="text-4xl font-bold tracking-tight">Recursos <span className="text-primary">FiveM</span></h1><p className="mt-2 text-muted-foreground">{canEdit ? 'Guarda referencias, enlaces y descargas de tus recursos autorizados.' : 'Consulta los recursos y lee su descripción. Las descargas y referencias son solo para administradores.'}</p><p className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-primary/30 bg-primary/5 px-4 py-1.5 text-sm text-foreground/80"><GithubIcon className="size-4 shrink-0 text-foreground" /><strong className="font-semibold text-foreground">Recordatorio:</strong> en los enlaces de GitHub coloca <code className="rounded bg-background/60 px-1.5 py-0.5 font-mono text-xs text-primary/90">git clone https://github.com/usuario/repositorio</code></p></div>
       {canEdit && (
       <Dialog open={open} onOpenChange={onDialogOpenChange}>
-        <DialogTrigger asChild><Button onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button></DialogTrigger>
+        <DialogTrigger asChild><Button size="lg" className="font-bold shadow-[0_0_22px_rgba(52,211,153,0.35)] sm:mt-9" onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button></DialogTrigger>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader><DialogTitle>{editing ? 'Editar recurso' : 'Nuevo recurso'}</DialogTitle></DialogHeader>
           <form onSubmit={saveResource}>
@@ -725,8 +739,8 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
       </Dialog>
       )}
     </div>
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar recursos, etiquetas..." /></div><Select value={type} onValueChange={(value) => setType(value as typeof type)}><SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
-    {filtered.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{filtered.map((item) => {
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 size-[18px] -translate-y-1/2 text-foreground/80" /><Input className="h-11 border-border/60 bg-card/60 pl-12" value={query} onChange={(e) => { setQuery(e.target.value); setPage(1) }} placeholder="Buscar recursos, etiquetas..." /></div><Select value={type} onValueChange={(value) => { setType(value as typeof type); setPage(1) }}><SelectTrigger className="h-11 w-full border-border/60 bg-card/60 data-[size=default]:h-11 sm:w-52"><span className="flex items-center gap-2.5"><ListFilter className="size-4" /><SelectValue /></span></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+    {filtered.length ? <><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visible.map((item) => {
       const attachments = (item.resource_attachments ?? []).slice().sort((a, b) => a.position - b.position)
       const imageAttachments = attachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
       const videos = attachments.filter((attachment) => attachment.file_type === VIDEO_TYPE)
@@ -734,18 +748,27 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
       const banner = imageAttachments.find((attachment) => attachment.is_banner)
       const galleryImages = [...(banner ? [banner] : []), ...imageAttachments.filter((attachment) => attachment.id !== banner?.id)]
       const thumbnails = imageAttachments.filter((attachment) => attachment.id !== banner?.id)
-      return <Card key={item.id} className="group overflow-hidden border-border/60 bg-card/70">
-        {banner && <button type="button" className="block w-full overflow-hidden" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="aspect-[16/8] w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></button>}
-        <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div><CardTitle className="mt-3 text-lg"><button type="button" className="text-left hover:underline" onClick={() => setDetail(item)}>{item.title}</button></CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => setDetail(item)} aria-label={`Ver ${item.title} en grande`}><Maximize2 className="size-4 text-muted-foreground" /></Button>{canEdit && item.user_id === profile?.id && <><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></>}</div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
-        <CardContent className="flex flex-col gap-4">
+      const totalFilesSize = files.reduce((sum, attachment) => sum + (attachment.file_size || 0), 0)
+      return <Card key={item.id} className="group gap-0 overflow-hidden border-border/60 bg-card/70 py-0 shadow-[0_8px_28px_rgba(0,0,0,0.28)]">
+        {banner && <div className="relative m-1.5 mb-0 overflow-hidden rounded-lg"><button type="button" className="block w-full overflow-hidden" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="aspect-[3.6/1] w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></button><span className="pointer-events-none absolute right-2.5 top-2.5 rounded-md border border-white/10 bg-black/60 px-2 py-0.5 text-xs text-white">1/{galleryImages.length}</span></div>}
+        <CardHeader className="gap-0 px-4 pb-0 pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div>
+            <div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" className="size-8" onClick={() => setDetail(item)} aria-label={`Ver ${item.title} en grande`}><ExternalLink className="size-4 text-muted-foreground" /></Button>{canEdit && item.user_id === profile?.id && <><Button variant="ghost" size="icon" className="size-8" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" className="size-8" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></>}</div>
+          </div>
+          <CardTitle className="mt-1 text-lg"><button type="button" className="text-left hover:underline" onClick={() => setDetail(item)}>{item.title}</button></CardTitle>
+          <CardDescription className="mt-2 line-clamp-2">{item.description || 'Sin descripción'}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-3">
           {videos.length > 0 && <div className="flex flex-col gap-3">{videos.map((video) => { const yt = parseYouTube(video.file_path); return yt ? <div key={video.id} className="flex flex-col gap-1.5"><YouTubeEmbed key={yt.id} id={yt.id} start={yt.start} title={video.file_name} /><p className="truncate text-xs text-muted-foreground" title={video.file_name}>{video.file_name}</p></div> : canOpenReferences ? <a key={video.id} href={video.file_path} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></a> : <span key={video.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><Video className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></span> })}</div>}
-          {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <button type="button" key={attachment.id} onClick={() => openLightbox(galleryImages, attachment.id)} title={`Ver ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="size-14 cursor-zoom-in object-cover transition-opacity hover:opacity-80" /></button>)}</div>}
-          {files.length > 0 && <div className="flex flex-col gap-2">{files.map((attachment) => canDownload && attachment.file_path ? <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><Download className="ml-auto size-3.5 shrink-0" /></a> : <div key={attachment.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><span className="ml-auto shrink-0 text-xs">{(attachment.file_size / (1024 * 1024)).toFixed(1)} MB</span></div>)}</div>}
-          <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="text-xs">#{tag}</Badge>)}</div>
-          {canOpenReferences && <div className="flex items-center gap-2 border-t border-border/60 pt-3">{item.url && <Button asChild variant="outline" size="sm"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}{item.download_url && <Button asChild size="sm"><a href={item.download_url} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a></Button>}{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}</div>}
+          {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <button type="button" key={attachment.id} onClick={() => openLightbox(galleryImages, attachment.id)} title={`Ver ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="h-9 w-16 cursor-zoom-in object-cover transition-opacity hover:opacity-80" /></button>)}</div>}
+          {files.length > 0 && <div className="flex flex-col gap-1.5">{files.map((attachment) => { const fileLabel = `${attachment.file_name} • ${(attachment.file_size / (1024 * 1024)).toFixed(1)} MB`; return canDownload && attachment.file_path ? <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{fileLabel}</span></a> : <div key={attachment.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><FileText className="size-4 shrink-0" /><span className="truncate">{fileLabel}</span></div> })}</div>}
+          <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="rounded-lg bg-white/[0.03] px-3 text-xs font-normal text-foreground/80">#{tag}</Badge>)}</div>
+          {canOpenReferences && <div className="-mx-4 mt-auto flex items-center gap-2 border-t border-border/60 px-4 pt-3">{item.url && <Button asChild variant="outline" size="sm" className="px-4 font-semibold"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}{item.download_url && <Button asChild size="sm" className="px-4 font-semibold shadow-[0_0_14px_rgba(52,211,153,0.28)]"><a href={item.download_url} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a></Button>}{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}{files.length > 0 && <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"><Download className="size-3.5" />{(totalFilesSize / (1024 * 1024)).toFixed(1)} MB</span>}</div>}
         </CardContent>
       </Card>
-    })}</div> : <div className="rounded-xl border border-dashed border-border p-12 text-center"><Bookmark className="mx-auto mb-3 size-8 text-muted-foreground" /><h2 className="font-semibold">{resources.length ? 'No hay resultados' : canEdit ? 'Tu biblioteca está vacía' : 'Todavía no hay recursos'}</h2><p className="mt-1 text-sm text-muted-foreground">{resources.length ? 'Prueba con otra búsqueda o tipo de recurso.' : 'Añade enlaces, notas y referencias de recursos con licencia o autorización.'}</p>{!resources.length && <Button className="mt-4" onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button>}</div>}
+    })}</div>
+    <div className="mt-6 flex items-center justify-between gap-4 text-xs text-muted-foreground"><span>Mostrando {visible.length} de {filtered.length} {filtered.length === 1 ? 'recurso' : 'recursos'}</span><div className="flex items-center gap-2"><Button variant="outline" size="icon-sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} aria-label="Página anterior"><ChevronLeft className="size-4" /></Button>{Array.from({ length: pageCount }, (_, n) => n + 1).map((n) => <Button key={n} variant={n === currentPage ? 'default' : 'outline'} size="icon-sm" onClick={() => setPage(n)} aria-label={`Página ${n}`} aria-current={n === currentPage ? 'page' : undefined} className="font-semibold">{n}</Button>)}<Button variant="outline" size="icon-sm" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)} aria-label="Página siguiente"><ChevronRight className="size-4" /></Button></div></div></> : <div className="rounded-xl border border-dashed border-border p-12 text-center"><Bookmark className="mx-auto mb-3 size-8 text-muted-foreground" /><h2 className="font-semibold">{resources.length ? 'No hay resultados' : canEdit ? 'Tu biblioteca está vacía' : 'Todavía no hay recursos'}</h2><p className="mt-1 text-sm text-muted-foreground">{resources.length ? 'Prueba con otra búsqueda o tipo de recurso.' : 'Añade enlaces, notas y referencias de recursos con licencia o autorización.'}</p>{!resources.length && <Button className="mt-4" onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button>}</div>}
   </main>
     <ResourceDetailDialog canDownload={canDownload} canEdit={canEdit && detail?.user_id === profile?.id} resource={detail ? (resources.find((item) => item.id === detail.id) ?? detail) : null} open={!!detail} onOpenChange={(next) => { if (!next) setDetail(null) }} onEdit={(resource) => { setDetail(null); openEditResource(resource) }} />
     {lightbox && <ImageLightbox images={lightbox.images} index={lightbox.index} onIndexChange={(index) => setLightbox((current) => current && { ...current, index })} onClose={() => setLightbox(null)} allowDownload={canDownload} />}
