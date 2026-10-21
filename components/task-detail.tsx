@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import {
   AlertCircle,
+  Bookmark,
   CalendarDays,
   CheckCircle2,
   Check,
@@ -56,13 +57,15 @@ import {
   MessageSquare,
   Paperclip,
   Pencil,
-  Play,
   Plus,
   Send,
   Trash2,
   Video,
   X,
 } from 'lucide-react'
+import { VIDEO_TYPE, parseYouTube, youTubeWatchUrl, fetchYouTubeTitle } from '@/lib/youtube'
+import { YouTubeEmbed } from '@/components/youtube-embed'
+import { MoveToResourceDialog } from '@/components/move-to-resource-dialog'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -341,121 +344,6 @@ function ImageLightbox({
   )
 }
 
-// ---------- YouTube ----------
-// Los vídeos se guardan en la tabla de adjuntos (attachments) con este tipo, así
-// que no hace falta ninguna migración en Supabase.
-const VIDEO_TYPE = 'video/youtube'
-const YT_ID = /^[A-Za-z0-9_-]{11}$/
-
-interface YouTubeRef {
-  id: string
-  /** Segundo desde el que empieza (0 = principio). */
-  start: number
-}
-
-function parseTimeParam(value: string | null) {
-  if (!value) return 0
-  if (/^\d+$/.test(value)) return Number(value)
-  const m = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/)
-  if (!m) return 0
-  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)
-}
-
-/** Reconoce enlaces de YouTube (watch, youtu.be, shorts, embed, live) y devuelve el id del vídeo. */
-function parseYouTube(input: string): YouTubeRef | null {
-  let url: URL
-  try {
-    url = new URL(input.trim())
-  } catch {
-    return null
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
-
-  const host = url.hostname.replace(/^(www|m)\./, '')
-  let id: string | null = null
-
-  if (host === 'youtu.be') {
-    id = url.pathname.split('/')[1] ?? null
-  } else if (host === 'youtube.com' || host === 'music.youtube.com' || host === 'youtube-nocookie.com') {
-    if (url.pathname === '/watch') {
-      id = url.searchParams.get('v')
-    } else {
-      const m = url.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/)
-      id = m ? m[1] : null
-    }
-  }
-
-  if (!id || !YT_ID.test(id)) return null
-  return { id, start: parseTimeParam(url.searchParams.get('t') ?? url.searchParams.get('start')) }
-}
-
-const youTubeWatchUrl = ({ id, start }: YouTubeRef) =>
-  `https://www.youtube.com/watch?v=${id}${start > 0 ? `&t=${start}s` : ''}`
-
-async function fetchYouTubeTitle(id: string): Promise<string> {
-  const fallback = 'Vídeo de YouTube'
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 4000)
-  try {
-    const res = await fetch(
-      `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}&format=json`,
-      { signal: controller.signal },
-    )
-    if (!res.ok) return fallback
-    const json = (await res.json()) as { title?: unknown }
-    return typeof json.title === 'string' && json.title.trim() ? json.title.trim().slice(0, 150) : fallback
-  } catch {
-    return fallback
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-/** Miniatura con botón de play; al pulsar carga el reproductor dentro de la propia web. */
-function YouTubeEmbed({ id, start, title }: { id: string; start: number; title: string }) {
-  const [playing, setPlaying] = useState(false)
-  const [thumbFailed, setThumbFailed] = useState(false)
-
-  return (
-    <div className="relative aspect-video overflow-hidden rounded-xl border border-border/50 bg-black shadow-sm">
-      {playing ? (
-        <iframe
-          src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&modestbranding=1${start > 0 ? `&start=${start}` : ''}`}
-          title={title}
-          className="absolute inset-0 h-full w-full"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-          allowFullScreen
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setPlaying(true)}
-          className="group absolute inset-0 block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`Reproducir ${title}`}
-        >
-          {thumbFailed ? (
-            <div className="absolute inset-0 bg-gradient-to-br from-red-600/40 via-zinc-900 to-black" />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={`https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
-              alt=""
-              loading="lazy"
-              onError={() => setThumbFailed(true)}
-              className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-            />
-          )}
-          <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-          <span className="absolute left-1/2 top-1/2 flex h-14 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl bg-red-600 shadow-lg transition-transform duration-200 group-hover:scale-110">
-            <Play className="h-6 w-6 translate-x-0.5 fill-white text-white" />
-          </span>
-        </button>
-      )}
-    </div>
-  )
-}
-
 export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], onUpdate, onDelete }: TaskDetailProps) {
   const [newSubtask, setNewSubtask] = useState('')
   const [newComment, setNewComment] = useState('')
@@ -483,6 +371,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
   const [videoUrlInput, setVideoUrlInput] = useState('')
   const [addingVideo, setAddingVideo] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
+  const [moveOpen, setMoveOpen] = useState(false)
   const supabase = useMemo(() => createClient(), [])
 
   useEffect(() => {
@@ -1540,6 +1429,11 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                 </div>
               </dl>
 
+              <Button variant="secondary" className="w-full" onClick={() => setMoveOpen(true)}>
+                <Bookmark className="mr-2 h-4 w-4" />
+                Mover a recursos
+              </Button>
+
               <Button
                 variant="outline"
                 className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -1552,6 +1446,22 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
           </div>
         </DialogContent>
       </Dialog>
+
+      <MoveToResourceDialog
+        task={task}
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        category={category ?? null}
+        profiles={profiles}
+        onMoved={({ removedTask }) => {
+          if (removedTask) {
+            onOpenChange(false)
+            onDelete()
+          } else {
+            onUpdate()
+          }
+        }}
+      />
 
       <ImageLightbox
         images={lightboxImages}

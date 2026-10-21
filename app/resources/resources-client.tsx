@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Profile, Resource, ResourceAttachment, ResourceStatus, ResourceType } from '@/lib/types'
 import { Header } from '@/components/header'
+import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
+import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
+import { YouTubeEmbed } from '@/components/youtube-embed'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -15,14 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { Bookmark, Download, ExternalLink, FileText, ImagePlus, Link2, Loader2, Paperclip, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 
-const typeLabels: Record<ResourceType, string> = { script: 'Script', mlo: 'MLO', vehicle: 'Vehículo', map: 'Mapa', ui: 'UI', tool: 'Herramienta', other: 'Otro' }
-const typeColors: Record<ResourceType, string> = { script: 'bg-primary/10 text-primary', mlo: 'bg-violet-500/10 text-violet-300', vehicle: 'bg-amber-500/10 text-amber-300', map: 'bg-sky-500/10 text-sky-300', ui: 'bg-pink-500/10 text-pink-300', tool: 'bg-orange-500/10 text-orange-300', other: 'bg-muted text-muted-foreground' }
-const statusLabels: Record<ResourceStatus, string> = { pending: 'Pendiente', in_progress: 'En progreso', implemented: 'Implementado' }
-const statusColors: Record<ResourceStatus, string> = { pending: 'bg-blue-500/10 text-blue-400', in_progress: 'bg-amber-500/10 text-amber-300', implemented: 'bg-emerald-500/10 text-emerald-300' }
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
 const MAX_RESOURCE_FILE_SIZE = 700 * 1024 * 1024
-const MAX_IMAGES = 8
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 
 type ResourceWithAttachments = Resource & { resource_attachments?: ResourceAttachment[] }
 type DraftImage = { file: File; previewUrl: string; id: string }
@@ -110,6 +107,8 @@ async function uploadResourceFile(
 }
 
 async function deleteStoredFile(pathname: string) {
+  // Imágenes y vídeos por enlace (p. ej. movidos desde una tarea) no están en R2: no hay nada que borrar.
+  if (/^https?:\/\//i.test(pathname)) return true
   try {
     const response = await fetch('/api/delete', {
       method: 'DELETE',
@@ -487,7 +486,8 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
 
   const activeAttachments = (editing?.resource_attachments ?? []).filter((attachment) => !removedAttachmentIds.includes(attachment.id))
   const activeImages = activeAttachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
-  const activeFiles = activeAttachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
+  const activeVideos = activeAttachments.filter((attachment) => attachment.file_type === VIDEO_TYPE)
+  const activeFiles = activeAttachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type) && attachment.file_type !== VIDEO_TYPE)
 
   return <div className="min-h-screen bg-background"><Header profile={profile} /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
     <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
@@ -558,6 +558,15 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
                   ))}
                 </div>
               </section>
+              {activeVideos.length > 0 && <section className="flex flex-col gap-2" aria-labelledby="resource-videos-title">
+                <div><Label id="resource-videos-title">Vídeos</Label><p className="mt-1 text-xs text-muted-foreground">Enlaces de YouTube. Se reproducen dentro de la tarjeta del recurso.</p></div>
+                <ul className="flex flex-col gap-2">{activeVideos.map((attachment) => (
+                  <li key={attachment.id} className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
+                    <a href={attachment.file_path} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-2 text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span></a>
+                    <Button type="button" variant="ghost" size="icon-sm" aria-label={`Quitar ${attachment.file_name}`} onClick={() => removeExistingFile(attachment)}><X className="size-3.5" /></Button>
+                  </li>
+                ))}</ul>
+              </section>}
               <section className="flex flex-col gap-2" aria-labelledby="resource-files-title">
                 <div><Label id="resource-files-title">Archivos adjuntos</Label><p className="mt-1 text-xs text-muted-foreground">Cualquier tipo de archivo, hasta 700 MB cada uno. Se guardan en Cloudflare R2.</p></div>
                 <label htmlFor="resource-files" className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
@@ -595,13 +604,15 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
     {filtered.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{filtered.map((item) => {
       const attachments = (item.resource_attachments ?? []).slice().sort((a, b) => a.position - b.position)
       const imageAttachments = attachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
-      const files = attachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
+      const videos = attachments.filter((attachment) => attachment.file_type === VIDEO_TYPE)
+      const files = attachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type) && attachment.file_type !== VIDEO_TYPE)
       const banner = imageAttachments.find((attachment) => attachment.is_banner)
       const thumbnails = imageAttachments.filter((attachment) => attachment.id !== banner?.id)
       return <Card key={item.id} className="group overflow-hidden border-border/60 bg-card/70">
         {banner && <a href={imageUrl(banner.file_path)} target="_blank" rel="noreferrer" aria-label={`Abrir portada de ${item.title}`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} className="aspect-[16/8] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></a>}
         <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div><CardTitle className="mt-3 text-lg">{item.title}</CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
         <CardContent className="flex flex-col gap-4">
+          {videos.length > 0 && <div className="flex flex-col gap-3">{videos.map((video) => { const yt = parseYouTube(video.file_path); return yt ? <div key={video.id} className="flex flex-col gap-1.5"><YouTubeEmbed key={yt.id} id={yt.id} start={yt.start} title={video.file_name} /><p className="truncate text-xs text-muted-foreground" title={video.file_name}>{video.file_name}</p></div> : <a key={video.id} href={video.file_path} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></a> })}</div>}
           {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" title={`Abrir ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} className="size-14 object-cover transition-opacity hover:opacity-80" /></a>)}</div>}
           {files.length > 0 && <div className="flex flex-col gap-2">{files.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><Download className="ml-auto size-3.5 shrink-0" /></a>)}</div>}
           <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="text-xs">#{tag}</Badge>)}</div>
