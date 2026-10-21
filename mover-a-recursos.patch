@@ -1,0 +1,1174 @@
+diff --git a/app/layout.tsx b/app/layout.tsx
+index 14bddb8..d095e4d 100644
+--- a/app/layout.tsx
++++ b/app/layout.tsx
+@@ -1,6 +1,7 @@
+ import type { Metadata } from 'next'
+ import { Geist, Geist_Mono } from 'next/font/google'
+ import { Analytics } from '@vercel/analytics/next'
++import { Toaster } from '@/components/ui/sonner'
+ import './globals.css'
+ 
+ const _geist = Geist({ subsets: ["latin"] });
+@@ -38,6 +39,7 @@ export default function RootLayout({
+     <html lang="en" className="dark bg-background">
+       <body className="font-sans antialiased">
+         {children}
++        <Toaster richColors />
+         {process.env.NODE_ENV === 'production' && <Analytics />}
+       </body>
+     </html>
+diff --git a/app/resources/resources-client.tsx b/app/resources/resources-client.tsx
+index f680ac9..c40ab6c 100644
+--- a/app/resources/resources-client.tsx
++++ b/app/resources/resources-client.tsx
+@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
+ import { createClient } from '@/lib/supabase/client'
+ import type { Profile, Resource, ResourceAttachment, ResourceStatus, ResourceType } from '@/lib/types'
+ import { Header } from '@/components/header'
++import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
++import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
++import { YouTubeEmbed } from '@/components/youtube-embed'
+ import { Button } from '@/components/ui/button'
+ import { Input } from '@/components/ui/input'
+ import { Textarea } from '@/components/ui/textarea'
+@@ -15,14 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
+ import { toast } from 'sonner'
+ import { Bookmark, Download, ExternalLink, FileText, ImagePlus, Link2, Loader2, Paperclip, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+ 
+-const typeLabels: Record<ResourceType, string> = { script: 'Script', mlo: 'MLO', vehicle: 'Vehículo', map: 'Mapa', ui: 'UI', tool: 'Herramienta', other: 'Otro' }
+-const typeColors: Record<ResourceType, string> = { script: 'bg-primary/10 text-primary', mlo: 'bg-violet-500/10 text-violet-300', vehicle: 'bg-amber-500/10 text-amber-300', map: 'bg-sky-500/10 text-sky-300', ui: 'bg-pink-500/10 text-pink-300', tool: 'bg-orange-500/10 text-orange-300', other: 'bg-muted text-muted-foreground' }
+-const statusLabels: Record<ResourceStatus, string> = { pending: 'Pendiente', in_progress: 'En progreso', implemented: 'Implementado' }
+-const statusColors: Record<ResourceStatus, string> = { pending: 'bg-blue-500/10 text-blue-400', in_progress: 'bg-amber-500/10 text-amber-300', implemented: 'bg-emerald-500/10 text-emerald-300' }
+ const MAX_IMAGE_SIZE = 8 * 1024 * 1024
+ const MAX_RESOURCE_FILE_SIZE = 700 * 1024 * 1024
+-const MAX_IMAGES = 8
+-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+ 
+ type ResourceWithAttachments = Resource & { resource_attachments?: ResourceAttachment[] }
+ type DraftImage = { file: File; previewUrl: string; id: string }
+@@ -110,6 +107,8 @@ async function uploadResourceFile(
+ }
+ 
+ async function deleteStoredFile(pathname: string) {
++  // Imágenes y vídeos por enlace (p. ej. movidos desde una tarea) no están en R2: no hay nada que borrar.
++  if (/^https?:\/\//i.test(pathname)) return true
+   try {
+     const response = await fetch('/api/delete', {
+       method: 'DELETE',
+@@ -487,7 +486,8 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
+ 
+   const activeAttachments = (editing?.resource_attachments ?? []).filter((attachment) => !removedAttachmentIds.includes(attachment.id))
+   const activeImages = activeAttachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
+-  const activeFiles = activeAttachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
++  const activeVideos = activeAttachments.filter((attachment) => attachment.file_type === VIDEO_TYPE)
++  const activeFiles = activeAttachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type) && attachment.file_type !== VIDEO_TYPE)
+ 
+   return <div className="min-h-screen bg-background"><Header profile={profile} /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+     <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+@@ -558,6 +558,15 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
+                   ))}
+                 </div>
+               </section>
++              {activeVideos.length > 0 && <section className="flex flex-col gap-2" aria-labelledby="resource-videos-title">
++                <div><Label id="resource-videos-title">Vídeos</Label><p className="mt-1 text-xs text-muted-foreground">Enlaces de YouTube. Se reproducen dentro de la tarjeta del recurso.</p></div>
++                <ul className="flex flex-col gap-2">{activeVideos.map((attachment) => (
++                  <li key={attachment.id} className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
++                    <a href={attachment.file_path} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-2 text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span></a>
++                    <Button type="button" variant="ghost" size="icon-sm" aria-label={`Quitar ${attachment.file_name}`} onClick={() => removeExistingFile(attachment)}><X className="size-3.5" /></Button>
++                  </li>
++                ))}</ul>
++              </section>}
+               <section className="flex flex-col gap-2" aria-labelledby="resource-files-title">
+                 <div><Label id="resource-files-title">Archivos adjuntos</Label><p className="mt-1 text-xs text-muted-foreground">Cualquier tipo de archivo, hasta 700 MB cada uno. Se guardan en Cloudflare R2.</p></div>
+                 <label htmlFor="resource-files" className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
+@@ -595,13 +604,15 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
+     {filtered.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{filtered.map((item) => {
+       const attachments = (item.resource_attachments ?? []).slice().sort((a, b) => a.position - b.position)
+       const imageAttachments = attachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
+-      const files = attachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
++      const videos = attachments.filter((attachment) => attachment.file_type === VIDEO_TYPE)
++      const files = attachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type) && attachment.file_type !== VIDEO_TYPE)
+       const banner = imageAttachments.find((attachment) => attachment.is_banner)
+       const thumbnails = imageAttachments.filter((attachment) => attachment.id !== banner?.id)
+       return <Card key={item.id} className="group overflow-hidden border-border/60 bg-card/70">
+         {banner && <a href={imageUrl(banner.file_path)} target="_blank" rel="noreferrer" aria-label={`Abrir portada de ${item.title}`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} className="aspect-[16/8] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></a>}
+         <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div><CardTitle className="mt-3 text-lg">{item.title}</CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
+         <CardContent className="flex flex-col gap-4">
++          {videos.length > 0 && <div className="flex flex-col gap-3">{videos.map((video) => { const yt = parseYouTube(video.file_path); return yt ? <div key={video.id} className="flex flex-col gap-1.5"><YouTubeEmbed key={yt.id} id={yt.id} start={yt.start} title={video.file_name} /><p className="truncate text-xs text-muted-foreground" title={video.file_name}>{video.file_name}</p></div> : <a key={video.id} href={video.file_path} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></a> })}</div>}
+           {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" title={`Abrir ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} className="size-14 object-cover transition-opacity hover:opacity-80" /></a>)}</div>}
+           {files.length > 0 && <div className="flex flex-col gap-2">{files.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><Download className="ml-auto size-3.5 shrink-0" /></a>)}</div>}
+           <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="text-xs">#{tag}</Badge>)}</div>
+diff --git a/components/move-to-resource-dialog.tsx b/components/move-to-resource-dialog.tsx
+new file mode 100644
+index 0000000..47be526
+--- /dev/null
++++ b/components/move-to-resource-dialog.tsx
+@@ -0,0 +1,566 @@
++'use client'
++
++import { useEffect, useMemo, useState } from 'react'
++import { useRouter } from 'next/navigation'
++import { toast } from 'sonner'
++import { createClient } from '@/lib/supabase/client'
++import type { Attachment, Category, Profile, ResourceStatus, ResourceType, TaskWithRelations } from '@/lib/types'
++import { MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
++import { buildResourceDraft, resourceImageType, type ResourceDraft } from '@/lib/task-to-resource'
++import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
++import { YouTubeEmbed } from '@/components/youtube-embed'
++import { Button } from '@/components/ui/button'
++import { Input } from '@/components/ui/input'
++import { Textarea } from '@/components/ui/textarea'
++import { Label } from '@/components/ui/label'
++import { Badge } from '@/components/ui/badge'
++import { Checkbox } from '@/components/ui/checkbox'
++import { Switch } from '@/components/ui/switch'
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
++import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
++import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
++import {
++  AlertCircle,
++  ArrowRight,
++  Bookmark,
++  Check,
++  Download,
++  ExternalLink,
++  Eye,
++  FileText,
++  Link2,
++  Loader2,
++  Star,
++  Video,
++  X,
++} from 'lucide-react'
++
++interface MoveToResourceDialogProps {
++  task: TaskWithRelations
++  open: boolean
++  onOpenChange: (open: boolean) => void
++  category: Category | null
++  profiles: Profile[]
++  /** Se llama cuando el recurso ya está creado. `removedTask` indica si la tarea se ha quitado. */
++  onMoved: (info: { removedTask: boolean }) => void
++}
++
++type ItemKind = 'image' | 'video' | 'file'
++
++interface MoveItem {
++  attachment: Attachment
++  kind: ItemKind
++  /** Es un enlace (imgur, YouTube...) y no un archivo guardado en R2. */
++  external: boolean
++  /** Archivo propio en R2: se puede mover, pero no compartir entre tarea y recurso. */
++  ownedR2: boolean
++  /** Motivo por el que no se puede incluir, si no se puede. */
++  blockedReason: string | null
++}
++
++const isHttp = (path: string) => /^https?:\/\//i.test(path)
++const mediaUrl = (path: string) => (path.startsWith('r2/') ? `/api/file?pathname=${encodeURIComponent(path)}` : path)
++
++function formatSize(bytes: number) {
++  if (!bytes) return 'Enlace'
++  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
++  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
++}
++
++function FieldLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?: string }) {
++  return (
++    <Label htmlFor={htmlFor} className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
++      {children}
++    </Label>
++  )
++}
++
++export function MoveToResourceDialog({ task, open, onOpenChange, category, profiles, onMoved }: MoveToResourceDialogProps) {
++  const router = useRouter()
++  const supabase = useMemo(() => createClient(), [])
++
++  const [form, setForm] = useState<ResourceDraft>(() => buildResourceDraft(task, category, profiles))
++  const [excluded, setExcluded] = useState<Set<string>>(new Set())
++  const [bannerId, setBannerId] = useState<string | null>(null)
++  const [removeTask, setRemoveTask] = useState(true)
++  const [saving, setSaving] = useState(false)
++  const [error, setError] = useState<string | null>(null)
++  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
++
++  useEffect(() => {
++    let active = true
++    supabase.auth.getUser().then(({ data }) => {
++      if (active) setCurrentUserId(data.user?.id ?? null)
++    })
++    return () => { active = false }
++  }, [supabase])
++
++  // Cada vez que se abre, se parte de una propuesta nueva calculada a partir de la tarea.
++  useEffect(() => {
++    if (!open) return
++    setForm(buildResourceDraft(task, category, profiles))
++    setExcluded(new Set())
++    setBannerId(null)
++    setRemoveTask(true)
++    setError(null)
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [open, task.id])
++
++  const items: MoveItem[] = useMemo(
++    () =>
++      task.attachments.map((attachment) => {
++        const external = isHttp(attachment.file_path)
++        const ownedR2 = !!currentUserId && attachment.file_path.startsWith(`r2/${currentUserId}/`)
++        const kind: ItemKind =
++          attachment.file_type === VIDEO_TYPE ? 'video' : attachment.file_type.startsWith('image/') ? 'image' : 'file'
++
++        let blockedReason: string | null = null
++        if (!external && !ownedR2) {
++          blockedReason = attachment.file_path.startsWith('r2/')
++            ? 'Lo subió otra persona: solo ella puede moverlo.'
++            : 'Formato antiguo: no se puede mover.'
++        } else if (ownedR2 && !removeTask) {
++          blockedReason = 'Es un archivo tuyo en R2: solo se puede mover, no copiar. Activa «Quitar la tarea».'
++        }
++        return { attachment, kind, external, ownedR2, blockedReason }
++      }),
++    [task.attachments, currentUserId, removeTask],
++  )
++
++  const isIncluded = (item: MoveItem) => !item.blockedReason && !excluded.has(item.attachment.id)
++  const images = items.filter((i) => i.kind === 'image')
++  const videos = items.filter((i) => i.kind === 'video')
++  const files = items.filter((i) => i.kind === 'file')
++  const includedImages = images.filter(isIncluded)
++  const includedVideos = videos.filter(isIncluded)
++  const includedFiles = files.filter(isIncluded)
++
++  // Portada: la elegida si sigue incluida; si no, la primera imagen incluida.
++  const banner = includedImages.find((i) => i.attachment.id === bannerId) ?? includedImages[0] ?? null
++  const thumbnails = includedImages.filter((i) => i !== banner)
++
++  const lost = items.filter((i) => !isIncluded(i)).length
++  const tooManyImages = includedImages.length > MAX_IMAGES
++  const titleMissing = !form.title.trim()
++  const canSave = !saving && !titleMissing && !tooManyImages
++
++  const toggle = (id: string) =>
++    setExcluded((current) => {
++      const next = new Set(current)
++      if (next.has(id)) next.delete(id)
++      else next.add(id)
++      return next
++    })
++
++  const set = <K extends keyof ResourceDraft>(key: K, value: ResourceDraft[K]) => setForm((f) => ({ ...f, [key]: value }))
++
++  const tagList = form.tags.split(',').map((t) => t.trim()).filter(Boolean)
++
++  const handleMove = async () => {
++    if (!canSave) return
++    setSaving(true)
++    setError(null)
++    let resourceId: string | null = null
++
++    try {
++      const { data: { user } } = await supabase.auth.getUser()
++      if (!user) throw new Error('Tu sesión no está disponible. Vuelve a iniciar sesión.')
++
++      const { data: created, error: resourceError } = await supabase
++        .from('resources')
++        .insert({
++          user_id: user.id,
++          title: form.title.trim(),
++          description: form.description.trim() || null,
++          resource_type: form.resource_type,
++          status: form.status,
++          url: form.url.trim() || null,
++          download_url: form.download_url.trim() || null,
++          tags: tagList,
++          notes: form.notes.trim() || null,
++        })
++        .select('id')
++        .single()
++      if (resourceError || !created) throw resourceError ?? new Error('No se pudo crear el recurso.')
++      resourceId = created.id as string
++
++      // Orden: imágenes (portada primero), vídeos y archivos.
++      const ordered = [
++        ...(banner ? [banner] : []),
++        ...includedImages.filter((i) => i !== banner),
++        ...includedVideos,
++        ...includedFiles,
++      ]
++      if (ordered.length) {
++        const rows = ordered.map(({ attachment, kind }, position) => ({
++          resource_id: resourceId,
++          user_id: user.id,
++          file_name: attachment.file_name,
++          file_path: attachment.file_path,
++          file_type:
++            kind === 'image'
++              ? resourceImageType(attachment.file_type)
++              : kind === 'video'
++                ? VIDEO_TYPE
++                : attachment.file_type || 'application/octet-stream',
++          file_size: attachment.file_size ?? 0,
++          position,
++          is_banner: !!banner && attachment.id === banner.attachment.id,
++        }))
++        const { error: attachmentsError } = await supabase.from('resource_attachments').insert(rows)
++        if (attachmentsError) throw attachmentsError
++      }
++
++      let removedTask = false
++      if (removeTask) {
++        const { error: deleteError } = await supabase.from('tasks').delete().eq('id', task.id)
++        if (deleteError) {
++          toast.warning('El recurso se creó, pero no se pudo quitar la tarea. Puedes borrarla a mano.')
++        } else {
++          removedTask = true
++          // Archivos tuyos que decidiste no mover: se borran con la tarea, como al eliminarla.
++          for (const item of items) {
++            if (item.ownedR2 && !isIncluded(item)) {
++              fetch('/api/delete', {
++                method: 'DELETE',
++                headers: { 'Content-Type': 'application/json' },
++                body: JSON.stringify({ pathname: item.attachment.file_path }),
++              }).catch(() => undefined)
++            }
++          }
++        }
++      }
++
++      toast.success('Recurso creado', {
++        description: removedTask ? 'La tarea se ha movido a Recursos.' : 'Se ha copiado a Recursos y la tarea sigue en su sitio.',
++        action: { label: 'Ver recursos', onClick: () => router.push('/resources') },
++      })
++      onOpenChange(false)
++      onMoved({ removedTask })
++    } catch (err) {
++      // Si algo falla a mitad, no se deja un recurso a medias.
++      if (resourceId) {
++        await supabase.from('resources').delete().eq('id', resourceId)
++      }
++      const e = err as { message?: string; code?: string } | null
++      setError(
++        e?.code === '23514'
++          ? 'La base de datos aún no admite imágenes ni vídeos por enlace en Recursos. Ejecuta la migración 20261021000000_resource_external_attachments.sql en Supabase y vuelve a intentarlo.'
++          : e?.message || 'No se pudo mover la tarea a recursos.',
++      )
++    } finally {
++      setSaving(false)
++    }
++  }
++
++  return (
++    <Dialog open={open} onOpenChange={(next) => { if (!saving) onOpenChange(next) }}>
++      <DialogContent
++        showCloseButton={false}
++        className="flex h-[94vh] max-h-[920px] w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl"
++      >
++        <div className="flex shrink-0 items-start gap-3 border-b border-border/60 bg-muted/20 px-6 py-4">
++          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
++            <Bookmark className="h-4 w-4" />
++          </span>
++          <div className="min-w-0 flex-1">
++            <DialogTitle className="text-xl font-semibold">Mover a recursos</DialogTitle>
++            <DialogDescription className="mt-0.5">
++              Revisa y edita todo antes de crear el recurso. A la derecha ves cómo quedará en la biblioteca.
++            </DialogDescription>
++          </div>
++          <DialogClose asChild>
++            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Cerrar" disabled={saving}>
++              <X className="h-4 w-4" />
++            </Button>
++          </DialogClose>
++        </div>
++
++        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
++          {/* Formulario */}
++          <div className="min-w-0 flex-1 space-y-6 p-6 lg:overflow-y-auto">
++            <div className="space-y-1.5">
++              <FieldLabel htmlFor="move-title">Título</FieldLabel>
++              <Input id="move-title" value={form.title} onChange={(e) => set('title', e.target.value)} maxLength={200} />
++              {titleMissing && <p className="text-xs text-destructive">El recurso necesita un título.</p>}
++            </div>
++
++            <div className="grid gap-4 sm:grid-cols-2">
++              <div className="space-y-1.5">
++                <FieldLabel>Tipo</FieldLabel>
++                <Select value={form.resource_type} onValueChange={(v) => set('resource_type', v as ResourceType)}>
++                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
++                  <SelectContent>
++                    {Object.entries(typeLabels).map(([value, label]) => (
++                      <SelectItem key={value} value={value}>{label}</SelectItem>
++                    ))}
++                  </SelectContent>
++                </Select>
++              </div>
++              <div className="space-y-1.5">
++                <FieldLabel>Estado</FieldLabel>
++                <Select value={form.status} onValueChange={(v) => set('status', v as ResourceStatus)}>
++                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
++                  <SelectContent>
++                    {Object.entries(statusLabels).map(([value, label]) => (
++                      <SelectItem key={value} value={value}>{label}</SelectItem>
++                    ))}
++                  </SelectContent>
++                </Select>
++              </div>
++            </div>
++
++            <div className="space-y-1.5">
++              <FieldLabel htmlFor="move-tags">Etiquetas</FieldLabel>
++              <Input id="move-tags" value={form.tags} onChange={(e) => set('tags', e.target.value)} placeholder="qbcore, ui" />
++              <p className="text-xs text-muted-foreground">Separadas por comas.</p>
++            </div>
++
++            <div className="space-y-1.5">
++              <FieldLabel htmlFor="move-description">Descripción</FieldLabel>
++              <Textarea
++                id="move-description"
++                value={form.description}
++                onChange={(e) => set('description', e.target.value)}
++                rows={3}
++                placeholder="Qué contiene y para qué sirve..."
++              />
++            </div>
++
++            <div className="grid gap-4 sm:grid-cols-2">
++              <div className="space-y-1.5">
++                <FieldLabel htmlFor="move-url">Enlace de referencia</FieldLabel>
++                <Input id="move-url" type="url" value={form.url} onChange={(e) => set('url', e.target.value)} placeholder="https://..." />
++              </div>
++              <div className="space-y-1.5">
++                <FieldLabel htmlFor="move-download">Enlace de descarga</FieldLabel>
++                <Input id="move-download" type="url" value={form.download_url} onChange={(e) => set('download_url', e.target.value)} placeholder="https://..." />
++              </div>
++            </div>
++
++            <div className="space-y-1.5">
++              <FieldLabel htmlFor="move-notes">Notas privadas</FieldLabel>
++              <Textarea
++                id="move-notes"
++                value={form.notes}
++                onChange={(e) => set('notes', e.target.value)}
++                rows={7}
++                className="font-mono text-xs leading-relaxed"
++              />
++              <p className="text-xs text-muted-foreground">Incluye un resumen de las subtareas y los comentarios de la tarea. Edítalo o bórralo si no lo necesitas.</p>
++            </div>
++
++            {/* Contenido que se mueve */}
++            {items.length > 0 && (
++              <div className="space-y-4 rounded-2xl border border-border/60 bg-card/40 p-4">
++                <div>
++                  <h3 className="text-sm font-semibold">Contenido que se mueve</h3>
++                  <p className="text-xs text-muted-foreground">Desmarca lo que no quieras llevarte.</p>
++                </div>
++
++                {images.length > 0 && (
++                  <div className="space-y-2">
++                    <FieldLabel>Imágenes</FieldLabel>
++                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
++                      {images.map((item) => {
++                        const included = isIncluded(item)
++                        const isBanner = banner === item
++                        return (
++                          <div
++                            key={item.attachment.id}
++                            className={`relative overflow-hidden rounded-lg border ${isBanner ? 'border-primary ring-1 ring-primary' : 'border-border'} ${included ? '' : 'opacity-40'}`}
++                          >
++                            {/* eslint-disable-next-line @next/next/no-img-element */}
++                            <img src={mediaUrl(item.attachment.file_path)} alt={item.attachment.file_name} className="aspect-[4/3] w-full object-cover" />
++                            <label className="absolute left-1.5 top-1.5 flex cursor-pointer items-center rounded bg-background/80 p-1 backdrop-blur">
++                              <Checkbox
++                                checked={included}
++                                disabled={!!item.blockedReason}
++                                onCheckedChange={() => toggle(item.attachment.id)}
++                                aria-label={`Incluir ${item.attachment.file_name}`}
++                              />
++                            </label>
++                            {included && (
++                              <button
++                                type="button"
++                                onClick={() => setBannerId(item.attachment.id)}
++                                className={`flex w-full items-center justify-center gap-1 px-2 py-1 text-[11px] ${isBanner ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
++                                aria-pressed={isBanner}
++                              >
++                                <Star className={`h-3 w-3 ${isBanner ? 'fill-current' : ''}`} />
++                                {isBanner ? 'Portada' : 'Elegir portada'}
++                              </button>
++                            )}
++                            {item.blockedReason && <p className="px-2 py-1 text-[10px] leading-tight text-amber-300">{item.blockedReason}</p>}
++                          </div>
++                        )
++                      })}
++                    </div>
++                    {tooManyImages && (
++                      <p className="flex items-center gap-1.5 text-xs text-destructive">
++                        <AlertCircle className="h-3.5 w-3.5" />
++                        Un recurso admite como máximo {MAX_IMAGES} imágenes. Desmarca {includedImages.length - MAX_IMAGES}.
++                      </p>
++                    )}
++                  </div>
++                )}
++
++                {[...videos, ...files].length > 0 && (
++                  <div className="space-y-2">
++                    <FieldLabel>Vídeos y archivos</FieldLabel>
++                    <ul className="space-y-2">
++                      {[...videos, ...files].map((item) => {
++                        const included = isIncluded(item)
++                        return (
++                          <li key={item.attachment.id} className={`flex items-center gap-3 rounded-lg border border-border/70 px-3 py-2 text-sm ${included ? '' : 'opacity-50'}`}>
++                            <Checkbox
++                              checked={included}
++                              disabled={!!item.blockedReason}
++                              onCheckedChange={() => toggle(item.attachment.id)}
++                              aria-label={`Incluir ${item.attachment.file_name}`}
++                            />
++                            {item.kind === 'video' ? <Video className="h-4 w-4 shrink-0 text-red-400" /> : <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />}
++                            <div className="min-w-0 flex-1">
++                              <p className="truncate">{item.attachment.file_name}</p>
++                              {item.blockedReason && <p className="text-[11px] text-amber-300">{item.blockedReason}</p>}
++                            </div>
++                            <span className="shrink-0 text-xs text-muted-foreground">{item.kind === 'video' ? 'YouTube' : formatSize(item.attachment.file_size)}</span>
++                          </li>
++                        )
++                      })}
++                    </ul>
++                  </div>
++                )}
++              </div>
++            )}
++
++            {/* Qué pasa con la tarea */}
++            <div className="space-y-3 rounded-2xl border border-border/60 bg-card/40 p-4">
++              <div className="flex items-start gap-3">
++                <Switch id="move-remove-task" checked={removeTask} onCheckedChange={setRemoveTask} className="mt-0.5" />
++                <div className="space-y-1">
++                  <Label htmlFor="move-remove-task" className="text-sm font-medium">Quitar la tarea después de moverla</Label>
++                  <p className="text-xs text-muted-foreground">
++                    {removeTask
++                      ? 'La tarea desaparece de Tareas. Sus subtareas y comentarios quedan resumidos en las notas.'
++                      : 'La tarea se queda donde está y el recurso es una copia. Los archivos subidos a R2 no se pueden copiar.'}
++                  </p>
++                </div>
++              </div>
++              {removeTask && lost > 0 && (
++                <p className="flex items-start gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
++                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++                  {lost === 1 ? '1 elemento no se moverá y se perderá' : `${lost} elementos no se moverán y se perderán`} al quitar la tarea.
++                </p>
++              )}
++            </div>
++          </div>
++
++          {/* Vista previa */}
++          <aside className="shrink-0 space-y-3 border-t border-border/60 bg-muted/20 p-5 lg:w-[380px] lg:overflow-y-auto lg:border-l lg:border-t-0">
++            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
++              <Eye className="h-3.5 w-3.5" />
++              Así se verá en Recursos
++            </div>
++
++            <Card className="group overflow-hidden border-border/60 bg-card/70">
++              {banner && (
++                // eslint-disable-next-line @next/next/no-img-element
++                <img src={mediaUrl(banner.attachment.file_path)} alt={`Portada: ${form.title}`} className="aspect-[16/8] w-full object-cover" />
++              )}
++              <CardHeader className="pb-3">
++                <div className="flex flex-wrap gap-1.5">
++                  <Badge className={typeColors[form.resource_type]}>{typeLabels[form.resource_type]}</Badge>
++                  <Badge className={statusColors[form.status]}>{statusLabels[form.status]}</Badge>
++                </div>
++                <CardTitle className="mt-3 text-lg">{form.title.trim() || 'Sin título'}</CardTitle>
++                <CardDescription className="line-clamp-2">{form.description.trim() || 'Sin descripción'}</CardDescription>
++              </CardHeader>
++              <CardContent className="flex flex-col gap-4">
++                {includedVideos.length > 0 && (
++                  <div className="flex flex-col gap-3">
++                    {includedVideos.map(({ attachment }) => {
++                      const yt = parseYouTube(attachment.file_path)
++                      return yt ? (
++                        <div key={attachment.id} className="flex flex-col gap-1.5">
++                          <YouTubeEmbed key={yt.id} id={yt.id} start={yt.start} title={attachment.file_name} />
++                          <p className="truncate text-xs text-muted-foreground">{attachment.file_name}</p>
++                        </div>
++                      ) : null
++                    })}
++                  </div>
++                )}
++                {thumbnails.length > 0 && (
++                  <div className="flex gap-2 overflow-x-auto pb-1">
++                    {thumbnails.map(({ attachment }) => (
++                      // eslint-disable-next-line @next/next/no-img-element
++                      <img key={attachment.id} src={mediaUrl(attachment.file_path)} alt={attachment.file_name} className="size-14 shrink-0 rounded-md border border-border/70 object-cover" />
++                    ))}
++                  </div>
++                )}
++                {includedFiles.length > 0 && (
++                  <div className="flex flex-col gap-2">
++                    {includedFiles.map(({ attachment }) => (
++                      <span key={attachment.id} className="flex items-center gap-2 truncate text-sm text-primary">
++                        <FileText className="size-4 shrink-0" />
++                        <span className="truncate">{attachment.file_name}</span>
++                        <Download className="ml-auto size-3.5 shrink-0" />
++                      </span>
++                    ))}
++                  </div>
++                )}
++                {tagList.length > 0 && (
++                  <div className="flex flex-wrap gap-1.5">
++                    {tagList.map((tag) => (
++                      <Badge key={tag} variant="outline" className="text-xs">#{tag}</Badge>
++                    ))}
++                  </div>
++                )}
++                <div className="flex items-center gap-2 border-t border-border/60 pt-3">
++                  {form.url.trim() && (
++                    <Button asChild variant="outline" size="sm">
++                      <a href={form.url.trim()} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a>
++                    </Button>
++                  )}
++                  {form.download_url.trim() && (
++                    <Button asChild size="sm">
++                      <a href={form.download_url.trim()} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a>
++                    </Button>
++                  )}
++                  {!form.url.trim() && !form.download_url.trim() && (
++                    <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>
++                  )}
++                </div>
++              </CardContent>
++            </Card>
++
++            {form.notes.trim() && (
++              <div className="rounded-xl border border-border/60 bg-background/50 p-3">
++                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Notas privadas</p>
++                <p className="line-clamp-6 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">{form.notes}</p>
++              </div>
++            )}
++          </aside>
++        </div>
++
++        <div className="shrink-0 space-y-2 border-t border-border/60 bg-background px-6 py-4">
++          {error && (
++            <div role="alert" className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
++              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
++              <span>{error}</span>
++            </div>
++          )}
++          <div className="flex items-center justify-end gap-2">
++            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
++              Cancelar
++            </Button>
++            <Button type="button" onClick={handleMove} disabled={!canSave}>
++              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : removeTask ? <ArrowRight className="mr-2 h-4 w-4" /> : <Check className="mr-2 h-4 w-4" />}
++              {saving ? 'Moviendo…' : removeTask ? 'Mover a recursos' : 'Copiar a recursos'}
++            </Button>
++          </div>
++        </div>
++      </DialogContent>
++    </Dialog>
++  )
++}
+diff --git a/components/task-detail.tsx b/components/task-detail.tsx
+index 505222e..41f1927 100644
+--- a/components/task-detail.tsx
++++ b/components/task-detail.tsx
+@@ -36,6 +36,7 @@ import {
+ } from '@/components/ui/alert-dialog'
+ import {
+   AlertCircle,
++  Bookmark,
+   CalendarDays,
+   CheckCircle2,
+   Check,
+@@ -56,13 +57,15 @@ import {
+   MessageSquare,
+   Paperclip,
+   Pencil,
+-  Play,
+   Plus,
+   Send,
+   Trash2,
+   Video,
+   X,
+ } from 'lucide-react'
++import { VIDEO_TYPE, parseYouTube, youTubeWatchUrl, fetchYouTubeTitle } from '@/lib/youtube'
++import { YouTubeEmbed } from '@/components/youtube-embed'
++import { MoveToResourceDialog } from '@/components/move-to-resource-dialog'
+ import { format, formatDistanceToNow } from 'date-fns'
+ import { es } from 'date-fns/locale'
+ 
+@@ -341,121 +344,6 @@ function ImageLightbox({
+   )
+ }
+ 
+-// ---------- YouTube ----------
+-// Los vídeos se guardan en la tabla de adjuntos (attachments) con este tipo, así
+-// que no hace falta ninguna migración en Supabase.
+-const VIDEO_TYPE = 'video/youtube'
+-const YT_ID = /^[A-Za-z0-9_-]{11}$/
+-
+-interface YouTubeRef {
+-  id: string
+-  /** Segundo desde el que empieza (0 = principio). */
+-  start: number
+-}
+-
+-function parseTimeParam(value: string | null) {
+-  if (!value) return 0
+-  if (/^\d+$/.test(value)) return Number(value)
+-  const m = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/)
+-  if (!m) return 0
+-  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)
+-}
+-
+-/** Reconoce enlaces de YouTube (watch, youtu.be, shorts, embed, live) y devuelve el id del vídeo. */
+-function parseYouTube(input: string): YouTubeRef | null {
+-  let url: URL
+-  try {
+-    url = new URL(input.trim())
+-  } catch {
+-    return null
+-  }
+-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+-
+-  const host = url.hostname.replace(/^(www|m)\./, '')
+-  let id: string | null = null
+-
+-  if (host === 'youtu.be') {
+-    id = url.pathname.split('/')[1] ?? null
+-  } else if (host === 'youtube.com' || host === 'music.youtube.com' || host === 'youtube-nocookie.com') {
+-    if (url.pathname === '/watch') {
+-      id = url.searchParams.get('v')
+-    } else {
+-      const m = url.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/)
+-      id = m ? m[1] : null
+-    }
+-  }
+-
+-  if (!id || !YT_ID.test(id)) return null
+-  return { id, start: parseTimeParam(url.searchParams.get('t') ?? url.searchParams.get('start')) }
+-}
+-
+-const youTubeWatchUrl = ({ id, start }: YouTubeRef) =>
+-  `https://www.youtube.com/watch?v=${id}${start > 0 ? `&t=${start}s` : ''}`
+-
+-async function fetchYouTubeTitle(id: string): Promise<string> {
+-  const fallback = 'Vídeo de YouTube'
+-  const controller = new AbortController()
+-  const timer = setTimeout(() => controller.abort(), 4000)
+-  try {
+-    const res = await fetch(
+-      `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}&format=json`,
+-      { signal: controller.signal },
+-    )
+-    if (!res.ok) return fallback
+-    const json = (await res.json()) as { title?: unknown }
+-    return typeof json.title === 'string' && json.title.trim() ? json.title.trim().slice(0, 150) : fallback
+-  } catch {
+-    return fallback
+-  } finally {
+-    clearTimeout(timer)
+-  }
+-}
+-
+-/** Miniatura con botón de play; al pulsar carga el reproductor dentro de la propia web. */
+-function YouTubeEmbed({ id, start, title }: { id: string; start: number; title: string }) {
+-  const [playing, setPlaying] = useState(false)
+-  const [thumbFailed, setThumbFailed] = useState(false)
+-
+-  return (
+-    <div className="relative aspect-video overflow-hidden rounded-xl border border-border/50 bg-black shadow-sm">
+-      {playing ? (
+-        <iframe
+-          src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&modestbranding=1${start > 0 ? `&start=${start}` : ''}`}
+-          title={title}
+-          className="absolute inset-0 h-full w-full"
+-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+-          allowFullScreen
+-          referrerPolicy="strict-origin-when-cross-origin"
+-        />
+-      ) : (
+-        <button
+-          type="button"
+-          onClick={() => setPlaying(true)}
+-          className="group absolute inset-0 block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+-          aria-label={`Reproducir ${title}`}
+-        >
+-          {thumbFailed ? (
+-            <div className="absolute inset-0 bg-gradient-to-br from-red-600/40 via-zinc-900 to-black" />
+-          ) : (
+-            // eslint-disable-next-line @next/next/no-img-element
+-            <img
+-              src={`https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
+-              alt=""
+-              loading="lazy"
+-              onError={() => setThumbFailed(true)}
+-              className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+-            />
+-          )}
+-          <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+-          <span className="absolute left-1/2 top-1/2 flex h-14 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl bg-red-600 shadow-lg transition-transform duration-200 group-hover:scale-110">
+-            <Play className="h-6 w-6 translate-x-0.5 fill-white text-white" />
+-          </span>
+-        </button>
+-      )}
+-    </div>
+-  )
+-}
+-
+ export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], onUpdate, onDelete }: TaskDetailProps) {
+   const [newSubtask, setNewSubtask] = useState('')
+   const [newComment, setNewComment] = useState('')
+@@ -483,6 +371,7 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
+   const [videoUrlInput, setVideoUrlInput] = useState('')
+   const [addingVideo, setAddingVideo] = useState(false)
+   const [videoError, setVideoError] = useState<string | null>(null)
++  const [moveOpen, setMoveOpen] = useState(false)
+   const supabase = useMemo(() => createClient(), [])
+ 
+   useEffect(() => {
+@@ -1540,6 +1429,11 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
+                 </div>
+               </dl>
+ 
++              <Button variant="secondary" className="w-full" onClick={() => setMoveOpen(true)}>
++                <Bookmark className="mr-2 h-4 w-4" />
++                Mover a recursos
++              </Button>
++
+               <Button
+                 variant="outline"
+                 className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+@@ -1553,6 +1447,22 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
+         </DialogContent>
+       </Dialog>
+ 
++      <MoveToResourceDialog
++        task={task}
++        open={moveOpen}
++        onOpenChange={setMoveOpen}
++        category={category ?? null}
++        profiles={profiles}
++        onMoved={({ removedTask }) => {
++          if (removedTask) {
++            onOpenChange(false)
++            onDelete()
++          } else {
++            onUpdate()
++          }
++        }}
++      />
++
+       <ImageLightbox
+         images={lightboxImages}
+         index={lightboxIndex}
+diff --git a/components/youtube-embed.tsx b/components/youtube-embed.tsx
+new file mode 100644
+index 0000000..8309f41
+--- /dev/null
++++ b/components/youtube-embed.tsx
+@@ -0,0 +1,49 @@
++'use client'
++
++import { useState } from 'react'
++import { Play } from 'lucide-react'
++
++/** Miniatura con botón de play; al pulsar carga el reproductor dentro de la propia web. */
++export function YouTubeEmbed({ id, start, title }: { id: string; start: number; title: string }) {
++  const [playing, setPlaying] = useState(false)
++  const [thumbFailed, setThumbFailed] = useState(false)
++
++  return (
++    <div className="relative aspect-video overflow-hidden rounded-xl border border-border/50 bg-black shadow-sm">
++      {playing ? (
++        <iframe
++          src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&modestbranding=1${start > 0 ? `&start=${start}` : ''}`}
++          title={title}
++          className="absolute inset-0 h-full w-full"
++          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
++          allowFullScreen
++          referrerPolicy="strict-origin-when-cross-origin"
++        />
++      ) : (
++        <button
++          type="button"
++          onClick={() => setPlaying(true)}
++          className="group absolute inset-0 block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
++          aria-label={`Reproducir ${title}`}
++        >
++          {thumbFailed ? (
++            <div className="absolute inset-0 bg-gradient-to-br from-red-600/40 via-zinc-900 to-black" />
++          ) : (
++            // eslint-disable-next-line @next/next/no-img-element
++            <img
++              src={`https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
++              alt=""
++              loading="lazy"
++              onError={() => setThumbFailed(true)}
++              className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
++            />
++          )}
++          <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
++          <span className="absolute left-1/2 top-1/2 flex h-14 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl bg-red-600 shadow-lg transition-transform duration-200 group-hover:scale-110">
++            <Play className="h-6 w-6 translate-x-0.5 fill-white text-white" />
++          </span>
++        </button>
++      )}
++    </div>
++  )
++}
+diff --git a/lib/resource-config.ts b/lib/resource-config.ts
+new file mode 100644
+index 0000000..90c7874
+--- /dev/null
++++ b/lib/resource-config.ts
+@@ -0,0 +1,9 @@
++import type { ResourceStatus, ResourceType } from '@/lib/types'
++
++export const typeLabels: Record<ResourceType, string> = { script: 'Script', mlo: 'MLO', vehicle: 'Vehículo', map: 'Mapa', ui: 'UI', tool: 'Herramienta', other: 'Otro' }
++export const typeColors: Record<ResourceType, string> = { script: 'bg-primary/10 text-primary', mlo: 'bg-violet-500/10 text-violet-300', vehicle: 'bg-amber-500/10 text-amber-300', map: 'bg-sky-500/10 text-sky-300', ui: 'bg-pink-500/10 text-pink-300', tool: 'bg-orange-500/10 text-orange-300', other: 'bg-muted text-muted-foreground' }
++export const statusLabels: Record<ResourceStatus, string> = { pending: 'Pendiente', in_progress: 'En progreso', implemented: 'Implementado' }
++export const statusColors: Record<ResourceStatus, string> = { pending: 'bg-blue-500/10 text-blue-400', in_progress: 'bg-amber-500/10 text-amber-300', implemented: 'bg-emerald-500/10 text-emerald-300' }
++
++export const MAX_IMAGES = 8
++export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+diff --git a/lib/task-to-resource.ts b/lib/task-to-resource.ts
+new file mode 100644
+index 0000000..dfbd7b9
+--- /dev/null
++++ b/lib/task-to-resource.ts
+@@ -0,0 +1,110 @@
++import type { Category, Profile, ResourceStatus, ResourceType, TaskStatus, TaskType } from '@/lib/types'
++
++export interface TaskForResource {
++  title: string
++  description: string | null
++  status: TaskStatus
++  type?: TaskType | null
++  created_at: string
++  user_id: string
++  subtasks: { title: string; completed: boolean }[]
++  comments: { user_id: string; content: string; created_at: string }[]
++}
++
++export interface ResourceDraft {
++  title: string
++  description: string
++  resource_type: ResourceType
++  status: ResourceStatus
++  url: string
++  download_url: string
++  tags: string
++  notes: string
++}
++
++const normalize = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
++
++/** Adivina el tipo de recurso a partir del texto de la tarea. Siempre se puede cambiar en la vista previa. */
++export function suggestResourceType(text: string): ResourceType {
++  const t = normalize(text)
++  if (/\bmlo\b|\binterior(es)?\b/.test(t)) return 'mlo'
++  if (/\bvehiculos?\b|\bcoches?\b|\bcars?\b|\bmotos?\b|\bvehicles?\b/.test(t)) return 'vehicle'
++  if (/\bmapas?\b|\bmaps?\b|\bymap\b|\bmapping\b/.test(t)) return 'map'
++  if (/\bui\b|\bnui\b|\bhud\b|\binterfaz\b/.test(t)) return 'ui'
++  if (/\bscripts?\b|\besx\b|\bqbcore\b|\bqb-core\b|\blua\b/.test(t)) return 'script'
++  if (/\bherramientas?\b|\btools?\b/.test(t)) return 'tool'
++  return 'other'
++}
++
++export function mapStatus(status: TaskStatus): ResourceStatus {
++  if (status === 'completed') return 'implemented'
++  if (status === 'in_progress') return 'in_progress'
++  return 'pending'
++}
++
++const isYouTubeHost = (url: string) => /^https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com)\//i.test(url)
++
++/** Enlaces http(s) de un texto, sin duplicados y sin la puntuación final. */
++export function extractLinks(text: string): string[] {
++  const found = text.match(/https?:\/\/[^\s<>"']+/gi) ?? []
++  const clean = found.map((link) => link.replace(/[.,;:!?)\]}]+$/, ''))
++  return [...new Set(clean)]
++}
++
++const DOWNLOAD_HINT = /(download|descarg|drive\.google\.com|mega\.nz|mediafire|dropbox\.com|github\.com\/[^/]+\/[^/]+\/releases)/i
++
++const slugTag = (text: string) =>
++  normalize(text).replace(/[,#]/g, ' ').trim().replace(/\s+/g, '-').replace(/[^a-z0-9-_]/g, '').slice(0, 30)
++
++const TYPE_TAG: Partial<Record<TaskType, string>> = { bug: 'bug', idea: 'idea', improvement: 'mejora' }
++
++const nameOf = (profile?: Profile | null) => profile?.display_name || profile?.email?.split('@')[0] || 'Usuario'
++
++function formatDate(date: string) {
++  return new Date(date).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
++}
++
++/** Propuesta inicial del recurso a partir de una tarea. */
++export function buildResourceDraft(task: TaskForResource, category: Category | null | undefined, profiles: Profile[]): ResourceDraft {
++  const description = (task.description ?? '').trim()
++  const links = extractLinks(description).filter((link) => !isYouTubeHost(link))
++  const downloadLink = links.find((link) => DOWNLOAD_HINT.test(link)) ?? ''
++  const referenceLink = links.find((link) => link !== downloadLink) ?? ''
++
++  // Si la descripción es solo un enlace, ya queda en «Enlace de referencia»: no se repite.
++  const onlyLink = links.length === 1 && description === links[0]
++  const finalDescription = onlyLink ? '' : description
++
++  const tags = [...new Set([category ? slugTag(category.name) : '', TYPE_TAG[task.type ?? 'task'] ?? ''].filter(Boolean))]
++
++  const author = profiles.find((p) => p.id === task.user_id)
++  const sections: string[] = [`Movido desde Tareas (creada por ${nameOf(author)} el ${formatDate(task.created_at)}).`]
++
++  if (task.subtasks.length) {
++    sections.push(`Subtareas:\n${task.subtasks.map((s) => `- [${s.completed ? 'x' : ' '}] ${s.title}`).join('\n')}`)
++  }
++  if (task.comments.length) {
++    const ordered = [...task.comments].sort((a, b) => a.created_at.localeCompare(b.created_at))
++    sections.push(
++      `Comentarios:\n${ordered
++        .map((c) => `- ${nameOf(profiles.find((p) => p.id === c.user_id))} (${formatDate(c.created_at)}): ${c.content.replace(/\s*\n\s*/g, ' ')}`)
++        .join('\n')}`,
++    )
++  }
++
++  return {
++    title: task.title,
++    description: finalDescription,
++    resource_type: suggestResourceType(`${task.title} ${description} ${category?.name ?? ''}`),
++    status: mapStatus(task.status),
++    url: referenceLink,
++    download_url: downloadLink,
++    tags: tags.join(', '),
++    notes: sections.join('\n\n'),
++  }
++}
++
++/** Los recursos solo reconocen estas imágenes; el resto de tipos de imagen se guardan como PNG (solo es una etiqueta, el navegador las muestra igual). */
++export function resourceImageType(fileType: string): string {
++  return ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(fileType) ? fileType : 'image/png'
++}
+diff --git a/lib/youtube.ts b/lib/youtube.ts
+new file mode 100644
+index 0000000..7b9d627
+--- /dev/null
++++ b/lib/youtube.ts
+@@ -0,0 +1,68 @@
++// Los vídeos se guardan en la tabla de adjuntos (attachments) con este tipo, así
++// que no hace falta ninguna migración en Supabase.
++export const VIDEO_TYPE = 'video/youtube'
++const YT_ID = /^[A-Za-z0-9_-]{11}$/
++
++export interface YouTubeRef {
++  id: string
++  /** Segundo desde el que empieza (0 = principio). */
++  start: number
++}
++
++function parseTimeParam(value: string | null) {
++  if (!value) return 0
++  if (/^\d+$/.test(value)) return Number(value)
++  const m = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/)
++  if (!m) return 0
++  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)
++}
++
++/** Reconoce enlaces de YouTube (watch, youtu.be, shorts, embed, live) y devuelve el id del vídeo. */
++export function parseYouTube(input: string): YouTubeRef | null {
++  let url: URL
++  try {
++    url = new URL(input.trim())
++  } catch {
++    return null
++  }
++  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
++
++  const host = url.hostname.replace(/^(www|m)\./, '')
++  let id: string | null = null
++
++  if (host === 'youtu.be') {
++    id = url.pathname.split('/')[1] ?? null
++  } else if (host === 'youtube.com' || host === 'music.youtube.com' || host === 'youtube-nocookie.com') {
++    if (url.pathname === '/watch') {
++      id = url.searchParams.get('v')
++    } else {
++      const m = url.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/)
++      id = m ? m[1] : null
++    }
++  }
++
++  if (!id || !YT_ID.test(id)) return null
++  return { id, start: parseTimeParam(url.searchParams.get('t') ?? url.searchParams.get('start')) }
++}
++
++export const youTubeWatchUrl = ({ id, start }: YouTubeRef) =>
++  `https://www.youtube.com/watch?v=${id}${start > 0 ? `&t=${start}s` : ''}`
++
++export async function fetchYouTubeTitle(id: string): Promise<string> {
++  const fallback = 'Vídeo de YouTube'
++  const controller = new AbortController()
++  const timer = setTimeout(() => controller.abort(), 4000)
++  try {
++    const res = await fetch(
++      `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}&format=json`,
++      { signal: controller.signal },
++    )
++    if (!res.ok) return fallback
++    const json = (await res.json()) as { title?: unknown }
++    return typeof json.title === 'string' && json.title.trim() ? json.title.trim().slice(0, 150) : fallback
++  } catch {
++    return fallback
++  } finally {
++    clearTimeout(timer)
++  }
++}
+diff --git a/supabase/migrations/20261021000000_resource_external_attachments.sql b/supabase/migrations/20261021000000_resource_external_attachments.sql
+new file mode 100644
+index 0000000..990bcb5
+--- /dev/null
++++ b/supabase/migrations/20261021000000_resource_external_attachments.sql
+@@ -0,0 +1,41 @@
++-- =====================================================================
++-- Recursos: permitir imágenes y vídeos por ENLACE (además de archivos en R2).
++--
++-- Hace falta para "Mover a recursos" desde una tarea: las imágenes de las
++-- tareas suelen ser enlaces (imgur...) y los vídeos son enlaces de YouTube.
++-- Hasta ahora una fila de resource_attachments solo podía apuntar a un
++-- archivo subido a R2 (ruta "r2/<tu id>/...") y con tamaño > 0.
++--
++-- Ejecutar UNA vez en Supabase -> SQL Editor. Es seguro repetirla.
++-- =====================================================================
++
++-- 1) Quita las comprobaciones antiguas de ruta y tamaño (sea cual sea su nombre).
++do $$
++declare
++  c record;
++begin
++  for c in
++    select conname
++    from pg_constraint
++    where conrelid = 'public.resource_attachments'::regclass
++      and contype = 'c'
++      and (pg_get_constraintdef(oid) ilike '%file_path%' or pg_get_constraintdef(oid) ilike '%file_size%')
++  loop
++    execute format('alter table public.resource_attachments drop constraint %I', c.conname);
++  end loop;
++end $$;
++
++-- 2) La ruta puede ser un archivo propio en R2 o un enlace http(s).
++alter table public.resource_attachments
++  add constraint resource_attachments_file_path_check
++  check (file_path like 'r2/' || user_id::text || '/%' or file_path ~* '^https?://');
++
++-- 3) Tamaño: los archivos siguen necesitando tamaño > 0 (máx. 700 MB);
++--    los enlaces externos no tienen tamaño y se guardan con 0.
++alter table public.resource_attachments
++  add constraint resource_attachments_file_size_check
++  check (
++    file_size >= 0
++    and file_size <= 734003200
++    and (file_size > 0 or file_path ~* '^https?://')
++  );
