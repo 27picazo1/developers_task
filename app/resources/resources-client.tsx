@@ -23,7 +23,7 @@ import { toast } from 'sonner'
 import { Bookmark, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, ImagePlus, Link2, ListFilter, Loader2, Lock, Paperclip, Pencil, Plus, Search, Trash2, Video, X } from 'lucide-react'
 
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
-const PAGE_SIZE = 6
+const PAGE_SIZE = 500
 const MAX_RESOURCE_FILE_SIZE = 700 * 1024 * 1024
 
 type ResourceWithAttachments = Resource & { resource_attachments?: ResourceAttachment[] }
