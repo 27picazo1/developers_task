@@ -3,6 +3,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getAccessStatus } from '@/lib/access'
+import { can } from '@/lib/roles'
 
 const s3 = new S3Client({
   region: 'auto',
@@ -34,7 +35,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Missing pathname' }, { status: 400 })
     }
 
-    if (!pathname.includes(user.id)) {
+    // Archivos de recursos: el rango decide. Admin → todo; moderador → solo
+    // imágenes (para verlas, no para descargar archivos); soporte → nada.
+    // Si la migración de rangos aún no está ejecutada, la RPC falla y se aplica la regla antigua.
+    const { data: fileAccess } = await supabase.rpc('resource_file_access', { p_path: pathname })
+    if (fileAccess === 'denied' || (fileAccess === 'allowed' && !can.viewResources(access.role))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    if (fileAccess !== 'allowed' && !pathname.includes(user.id)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

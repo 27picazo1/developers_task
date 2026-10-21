@@ -49,6 +49,7 @@ export default async function DashboardPage() {
   return (
     <DashboardClient
       profile={profile}
+      role={access.role ?? 'support'}
       initialCategories={categories || []}
       initialTasks={tasks || []}
       initialProfiles={profiles || []}

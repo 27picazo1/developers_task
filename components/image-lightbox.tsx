@@ -15,11 +15,14 @@ export function ImageLightbox({
   index,
   onIndexChange,
   onClose,
+  allowDownload = true,
 }: {
   images: LightboxImage[]
   index: number | null
   onIndexChange: (index: number) => void
   onClose: () => void
+  /** false → sin botones de "Abrir original" ni "Descargar" (moderadores). */
+  allowDownload?: boolean
 }) {
   const image = index !== null ? images[index] : null
   const hasMany = images.length > 1
@@ -49,16 +52,20 @@ export function ImageLightbox({
               {hasMany && (
                 <span className="text-xs text-white/60">{(index ?? 0) + 1} / {images.length}</span>
               )}
+              {allowDownload && (
               <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white">
                 <a href={image.src} target="_blank" rel="noopener noreferrer" title="Abrir original">
                   <ExternalLink className="h-4 w-4" />
                 </a>
               </Button>
+              )}
+              {allowDownload && (
               <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white">
                 <a href={image.src} download={image.name} title="Descargar">
                   <Download className="h-4 w-4" />
                 </a>
               </Button>
+              )}
               <DialogClose asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white" title="Cerrar">
                   <X className="h-4 w-4" />

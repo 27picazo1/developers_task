@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Profile, Category, TaskWithRelations, TaskStatus, TaskType } from '@/lib/types'
 import { Header } from '@/components/header'
+import type { Role } from '@/lib/roles'
 import { TaskCard, authorName } from '@/components/task-card'
 import { TaskDialog } from '@/components/task-dialog'
 import { TaskDetail } from '@/components/task-detail'
@@ -30,6 +31,7 @@ import { columns, typeConfig, typeOrder } from '@/lib/task-config'
 
 interface DashboardClientProps {
   profile: Profile | null
+  role: Role
   initialCategories: Category[]
   initialTasks: TaskWithRelations[]
   initialProfiles: Profile[]
@@ -37,7 +39,7 @@ interface DashboardClientProps {
 
 type FilterType = 'all' | TaskType
 
-export function DashboardClient({ profile, initialCategories, initialTasks, initialProfiles }: DashboardClientProps) {
+export function DashboardClient({ profile, role, initialCategories, initialTasks, initialProfiles }: DashboardClientProps) {
   const [categories, setCategories] = useState(initialCategories)
   const [tasks, setTasks] = useState(initialTasks)
   const [profiles, setProfiles] = useState(initialProfiles)
@@ -167,7 +169,7 @@ export function DashboardClient({ profile, initialCategories, initialTasks, init
 
   return (
     <div className="min-h-screen bg-background">
-      <Header profile={profile} />
+      <Header profile={profile} role={role} />
 
       <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
         {/* Título + acciones rápidas */}
@@ -430,6 +432,7 @@ export function DashboardClient({ profile, initialCategories, initialTasks, init
         onOpenChange={setTaskDetailOpen}
         categories={categories}
         profiles={profiles}
+        canMoveToResources={role === 'admin'}
         onUpdate={fetchData}
         onDelete={fetchData}
       />

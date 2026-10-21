@@ -1,0 +1,1111 @@
+diff --git a/app/api/file/route.ts b/app/api/file/route.ts
+index 5c40e83..1259519 100644
+--- a/app/api/file/route.ts
++++ b/app/api/file/route.ts
+@@ -3,6 +3,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+ import { type NextRequest, NextResponse } from 'next/server'
+ import { createClient } from '@/lib/supabase/server'
+ import { getAccessStatus } from '@/lib/access'
++import { can } from '@/lib/roles'
+ 
+ const s3 = new S3Client({
+   region: 'auto',
+@@ -34,7 +35,15 @@ export async function GET(request: NextRequest) {
+       return NextResponse.json({ error: 'Missing pathname' }, { status: 400 })
+     }
+ 
+-    if (!pathname.includes(user.id)) {
++    // Archivos de recursos: el rango decide. Admin → todo; moderador → solo
++    // imágenes (para verlas, no para descargar archivos); soporte → nada.
++    // Si la migración de rangos aún no está ejecutada, la RPC falla y se aplica la regla antigua.
++    const { data: fileAccess } = await supabase.rpc('resource_file_access', { p_path: pathname })
++    if (fileAccess === 'denied' || (fileAccess === 'allowed' && !can.viewResources(access.role))) {
++      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
++    }
++
++    if (fileAccess !== 'allowed' && !pathname.includes(user.id)) {
+       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+     }
+ 
+diff --git a/app/api/upload/route.ts b/app/api/upload/route.ts
+index 404569a..30be8a9 100644
+--- a/app/api/upload/route.ts
++++ b/app/api/upload/route.ts
+@@ -10,6 +10,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+ import { type NextRequest, NextResponse } from 'next/server'
+ import { createClient } from '@/lib/supabase/server'
+ import { getAccessStatus } from '@/lib/access'
++import { can } from '@/lib/roles'
+ 
+ const s3 = new S3Client({
+   region: 'auto',
+@@ -44,6 +45,11 @@ export async function POST(request: NextRequest) {
+       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+     }
+ 
++    // Solo el admin crea recursos, así que solo él sube sus archivos.
++    if (!can.editResources(access.role)) {
++      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
++    }
++
+     if (!process.env.R2_BUCKET_NAME) {
+       return NextResponse.json({ error: 'R2 is not configured' }, { status: 500 })
+     }
+diff --git a/app/dashboard/dashboard-client.tsx b/app/dashboard/dashboard-client.tsx
+index a6f8851..cee0d4c 100644
+--- a/app/dashboard/dashboard-client.tsx
++++ b/app/dashboard/dashboard-client.tsx
+@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react'
+ import { createClient } from '@/lib/supabase/client'
+ import type { Profile, Category, TaskWithRelations, TaskStatus, TaskType } from '@/lib/types'
+ import { Header } from '@/components/header'
++import type { Role } from '@/lib/roles'
+ import { TaskCard, authorName } from '@/components/task-card'
+ import { TaskDialog } from '@/components/task-dialog'
+ import { TaskDetail } from '@/components/task-detail'
+@@ -30,6 +31,7 @@ import { columns, typeConfig, typeOrder } from '@/lib/task-config'
+ 
+ interface DashboardClientProps {
+   profile: Profile | null
++  role: Role
+   initialCategories: Category[]
+   initialTasks: TaskWithRelations[]
+   initialProfiles: Profile[]
+@@ -37,7 +39,7 @@ interface DashboardClientProps {
+ 
+ type FilterType = 'all' | TaskType
+ 
+-export function DashboardClient({ profile, initialCategories, initialTasks, initialProfiles }: DashboardClientProps) {
++export function DashboardClient({ profile, role, initialCategories, initialTasks, initialProfiles }: DashboardClientProps) {
+   const [categories, setCategories] = useState(initialCategories)
+   const [tasks, setTasks] = useState(initialTasks)
+   const [profiles, setProfiles] = useState(initialProfiles)
+@@ -167,7 +169,7 @@ export function DashboardClient({ profile, initialCategories, initialTasks, init
+ 
+   return (
+     <div className="min-h-screen bg-background">
+-      <Header profile={profile} />
++      <Header profile={profile} role={role} />
+ 
+       <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+         {/* Título + acciones rápidas */}
+@@ -430,6 +432,7 @@ export function DashboardClient({ profile, initialCategories, initialTasks, init
+         onOpenChange={setTaskDetailOpen}
+         categories={categories}
+         profiles={profiles}
++        canMoveToResources={role === 'admin'}
+         onUpdate={fetchData}
+         onDelete={fetchData}
+       />
+diff --git a/app/dashboard/loading.tsx b/app/dashboard/loading.tsx
+new file mode 100644
+index 0000000..bb66f81
+--- /dev/null
++++ b/app/dashboard/loading.tsx
+@@ -0,0 +1,11 @@
++import { Loader2 } from 'lucide-react'
++
++// Se muestra al instante al pulsar "Tareas": la navegación responde con un solo clic
++// aunque el servidor tarde un momento en cargar los datos.
++export default function Loading() {
++  return (
++    <div className="flex min-h-screen items-center justify-center bg-background">
++      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label="Cargando tareas" />
++    </div>
++  )
++}
+diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
+index c686b61..d186a03 100644
+--- a/app/dashboard/page.tsx
++++ b/app/dashboard/page.tsx
+@@ -49,6 +49,7 @@ export default async function DashboardPage() {
+   return (
+     <DashboardClient
+       profile={profile}
++      role={access.role ?? 'support'}
+       initialCategories={categories || []}
+       initialTasks={tasks || []}
+       initialProfiles={profiles || []}
+diff --git a/app/resources/loading.tsx b/app/resources/loading.tsx
+new file mode 100644
+index 0000000..6cd7ffe
+--- /dev/null
++++ b/app/resources/loading.tsx
+@@ -0,0 +1,11 @@
++import { Loader2 } from 'lucide-react'
++
++// Se muestra al instante al pulsar "Recursos": la navegación responde con un solo clic
++// aunque el servidor tarde un momento en cargar los datos.
++export default function Loading() {
++  return (
++    <div className="flex min-h-screen items-center justify-center bg-background">
++      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label="Cargando recursos" />
++    </div>
++  )
++}
+diff --git a/app/resources/page.tsx b/app/resources/page.tsx
+index a6c2839..857475c 100644
+--- a/app/resources/page.tsx
++++ b/app/resources/page.tsx
+@@ -1,6 +1,7 @@
+ import { redirect } from 'next/navigation'
+ import { createClient } from '@/lib/supabase/server'
+ import { getAccessStatus } from '@/lib/access'
++import { can } from '@/lib/roles'
+ import { ResourcesClient } from './resources-client'
+ 
+ export default async function ResourcesPage() {
+@@ -11,10 +12,16 @@ export default async function ResourcesPage() {
+   const access = await getAccessStatus(supabase, user.id)
+   if (!access.isMember) redirect('/acceso')
+ 
++  // Soporte no tiene Recursos.
++  const role = access.role
++  if (!role || !can.viewResources(role)) redirect('/dashboard')
++
++  // list_resources() devuelve los recursos ya recortados según el rango:
++  // el moderador nunca recibe enlaces, descargas, notas ni rutas de archivos.
+   const [{ data: profile }, { data: resources }] = await Promise.all([
+     supabase.from('profiles').select('*').eq('id', user.id).single(),
+-    supabase.from('resources').select('*, resource_attachments(*)').eq('user_id', user.id).order('created_at', { ascending: false }),
++    supabase.rpc('list_resources'),
+   ])
+ 
+-  return <ResourcesClient profile={profile} initialResources={resources ?? []} />
++  return <ResourcesClient profile={profile} role={role} initialResources={(resources as never[]) ?? []} />
+ }
+diff --git a/app/resources/resources-client.tsx b/app/resources/resources-client.tsx
+index 22a0311..0907379 100644
+--- a/app/resources/resources-client.tsx
++++ b/app/resources/resources-client.tsx
+@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
+ import { createClient } from '@/lib/supabase/client'
+ import type { Profile, Resource, ResourceAttachment, ResourceStatus, ResourceType } from '@/lib/types'
+ import { Header } from '@/components/header'
++import { can, type Role } from '@/lib/roles'
+ import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
+ import { VIDEO_TYPE, fetchYouTubeTitle, parseYouTube, youTubeWatchUrl, type YouTubeRef } from '@/lib/youtube'
+ import { YouTubeEmbed } from '@/components/youtube-embed'
+@@ -139,8 +140,12 @@ async function isSupportedImage(file: File) {
+     (file.type === 'image/webp' && isWebp)
+ }
+ 
+-export function ResourcesClient({ profile, initialResources }: { profile: Profile | null; initialResources: ResourceWithAttachments[] }) {
++export function ResourcesClient({ profile, role, initialResources }: { profile: Profile | null; role: Role; initialResources: ResourceWithAttachments[] }) {
+   const supabase = createClient()
++  // Admin: todo. Moderador: solo ver y leer (sin descargas, referencias ni edición).
++  const canEdit = can.editResources(role)
++  const canDownload = can.downloadResources(role)
++  const canOpenReferences = can.openReferences(role)
+   const [resources, setResources] = useState(initialResources)
+   const [query, setQuery] = useState('')
+   const [type, setType] = useState<'all' | ResourceType>('all')
+@@ -584,9 +589,10 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
+   const activeVideos = activeAttachments.filter((attachment) => attachment.file_type === VIDEO_TYPE)
+   const activeFiles = activeAttachments.filter((attachment) => !ALLOWED_IMAGE_TYPES.includes(attachment.file_type) && attachment.file_type !== VIDEO_TYPE)
+ 
+-  return <div className="min-h-screen bg-background"><Header profile={profile} /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
++  return <div className="min-h-screen bg-background"><Header profile={profile} role={role} /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+     <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+-      <div><div className="mb-2 flex items-center gap-2 text-primary"><Bookmark className="size-4" /><span className="text-sm font-medium uppercase tracking-wider">Biblioteca privada</span></div><h1 className="text-3xl font-bold tracking-tight">Recursos FiveM</h1><p className="mt-2 text-muted-foreground">Guarda referencias, enlaces y descargas de tus recursos autorizados.</p></div>
++      <div><div className="mb-2 flex items-center gap-2 text-primary"><Bookmark className="size-4" /><span className="text-sm font-medium uppercase tracking-wider">Biblioteca privada</span></div><h1 className="text-3xl font-bold tracking-tight">Recursos FiveM</h1><p className="mt-2 text-muted-foreground">{canEdit ? 'Guarda referencias, enlaces y descargas de tus recursos autorizados.' : 'Consulta los recursos y lee su descripción. Las descargas y referencias son solo para administradores.'}</p></div>
++      {canEdit && (
+       <Dialog open={open} onOpenChange={onDialogOpenChange}>
+         <DialogTrigger asChild><Button onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button></DialogTrigger>
+         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+@@ -717,6 +723,7 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
+           </form>
+         </DialogContent>
+       </Dialog>
++      )}
+     </div>
+     <div className="mb-6 flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar recursos, etiquetas..." /></div><Select value={type} onValueChange={(value) => setType(value as typeof type)}><SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+     {filtered.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{filtered.map((item) => {
+@@ -729,18 +736,18 @@ export function ResourcesClient({ profile, initialResources }: { profile: Profil
+       const thumbnails = imageAttachments.filter((attachment) => attachment.id !== banner?.id)
+       return <Card key={item.id} className="group overflow-hidden border-border/60 bg-card/70">
+         {banner && <button type="button" className="block w-full overflow-hidden" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="aspect-[16/8] w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></button>}
+-        <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div><CardTitle className="mt-3 text-lg"><button type="button" className="text-left hover:underline" onClick={() => setDetail(item)}>{item.title}</button></CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => setDetail(item)} aria-label={`Ver ${item.title} en grande`}><Maximize2 className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
++        <CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div><CardTitle className="mt-3 text-lg"><button type="button" className="text-left hover:underline" onClick={() => setDetail(item)}>{item.title}</button></CardTitle></div><div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" onClick={() => setDetail(item)} aria-label={`Ver ${item.title} en grande`}><Maximize2 className="size-4 text-muted-foreground" /></Button>{canEdit && item.user_id === profile?.id && <><Button variant="ghost" size="icon" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></>}</div></div><CardDescription className="line-clamp-2">{item.description || 'Sin descripción'}</CardDescription></CardHeader>
+         <CardContent className="flex flex-col gap-4">
+-          {videos.length > 0 && <div className="flex flex-col gap-3">{videos.map((video) => { const yt = parseYouTube(video.file_path); return yt ? <div key={video.id} className="flex flex-col gap-1.5"><YouTubeEmbed key={yt.id} id={yt.id} start={yt.start} title={video.file_name} /><p className="truncate text-xs text-muted-foreground" title={video.file_name}>{video.file_name}</p></div> : <a key={video.id} href={video.file_path} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></a> })}</div>}
++          {videos.length > 0 && <div className="flex flex-col gap-3">{videos.map((video) => { const yt = parseYouTube(video.file_path); return yt ? <div key={video.id} className="flex flex-col gap-1.5"><YouTubeEmbed key={yt.id} id={yt.id} start={yt.start} title={video.file_name} /><p className="truncate text-xs text-muted-foreground" title={video.file_name}>{video.file_name}</p></div> : canOpenReferences ? <a key={video.id} href={video.file_path} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></a> : <span key={video.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><Video className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></span> })}</div>}
+           {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <button type="button" key={attachment.id} onClick={() => openLightbox(galleryImages, attachment.id)} title={`Ver ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="size-14 cursor-zoom-in object-cover transition-opacity hover:opacity-80" /></button>)}</div>}
+-          {files.length > 0 && <div className="flex flex-col gap-2">{files.map((attachment) => <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><Download className="ml-auto size-3.5 shrink-0" /></a>)}</div>}
++          {files.length > 0 && <div className="flex flex-col gap-2">{files.map((attachment) => canDownload && attachment.file_path ? <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><Download className="ml-auto size-3.5 shrink-0" /></a> : <div key={attachment.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><FileText className="size-4 shrink-0" /><span className="truncate">{attachment.file_name}</span><span className="ml-auto shrink-0 text-xs">{(attachment.file_size / (1024 * 1024)).toFixed(1)} MB</span></div>)}</div>}
+           <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="text-xs">#{tag}</Badge>)}</div>
+-          <div className="flex items-center gap-2 border-t border-border/60 pt-3">{item.url && <Button asChild variant="outline" size="sm"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}{item.download_url && <Button asChild size="sm"><a href={item.download_url} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a></Button>}{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}</div>
++          {canOpenReferences && <div className="flex items-center gap-2 border-t border-border/60 pt-3">{item.url && <Button asChild variant="outline" size="sm"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}{item.download_url && <Button asChild size="sm"><a href={item.download_url} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a></Button>}{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}</div>}
+         </CardContent>
+       </Card>
+-    })}</div> : <div className="rounded-xl border border-dashed border-border p-12 text-center"><Bookmark className="mx-auto mb-3 size-8 text-muted-foreground" /><h2 className="font-semibold">{resources.length ? 'No hay resultados' : 'Tu biblioteca está vacía'}</h2><p className="mt-1 text-sm text-muted-foreground">{resources.length ? 'Prueba con otra búsqueda o tipo de recurso.' : 'Añade enlaces, notas y referencias de recursos con licencia o autorización.'}</p>{!resources.length && <Button className="mt-4" onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button>}</div>}
++    })}</div> : <div className="rounded-xl border border-dashed border-border p-12 text-center"><Bookmark className="mx-auto mb-3 size-8 text-muted-foreground" /><h2 className="font-semibold">{resources.length ? 'No hay resultados' : canEdit ? 'Tu biblioteca está vacía' : 'Todavía no hay recursos'}</h2><p className="mt-1 text-sm text-muted-foreground">{resources.length ? 'Prueba con otra búsqueda o tipo de recurso.' : 'Añade enlaces, notas y referencias de recursos con licencia o autorización.'}</p>{!resources.length && <Button className="mt-4" onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button>}</div>}
+   </main>
+-    <ResourceDetailDialog resource={detail ? (resources.find((item) => item.id === detail.id) ?? detail) : null} open={!!detail} onOpenChange={(next) => { if (!next) setDetail(null) }} onEdit={(resource) => { setDetail(null); openEditResource(resource) }} />
+-    {lightbox && <ImageLightbox images={lightbox.images} index={lightbox.index} onIndexChange={(index) => setLightbox((current) => current && { ...current, index })} onClose={() => setLightbox(null)} />}
++    <ResourceDetailDialog canDownload={canDownload} canEdit={canEdit && detail?.user_id === profile?.id} resource={detail ? (resources.find((item) => item.id === detail.id) ?? detail) : null} open={!!detail} onOpenChange={(next) => { if (!next) setDetail(null) }} onEdit={(resource) => { setDetail(null); openEditResource(resource) }} />
++    {lightbox && <ImageLightbox images={lightbox.images} index={lightbox.index} onIndexChange={(index) => setLightbox((current) => current && { ...current, index })} onClose={() => setLightbox(null)} allowDownload={canDownload} />}
+   </div>
+ }
+diff --git a/components/credentials-dialog.tsx b/components/credentials-dialog.tsx
+index 782b300..40892ba 100644
+--- a/components/credentials-dialog.tsx
++++ b/components/credentials-dialog.tsx
+@@ -3,6 +3,7 @@
+ import { useCallback, useEffect, useMemo, useState } from 'react'
+ import { createClient } from '@/lib/supabase/client'
+ import type { AccessCredential, Profile, WorkspaceMember } from '@/lib/types'
++import { ROLES, roleBadgeClasses, roleLabels, normalizeRole, type Role } from '@/lib/roles'
+ import { authorName } from '@/components/task-card'
+ import { Button } from '@/components/ui/button'
+ import { Input } from '@/components/ui/input'
+@@ -41,6 +42,7 @@ import { es } from 'date-fns/locale'
+ interface CredentialsDialogProps {
+   open: boolean
+   onOpenChange: (open: boolean) => void
++  initialTab?: 'credenciales' | 'personas'
+ }
+ 
+ // Atajos: rellenan el campo de tiempo, que también se puede escribir a mano.
+@@ -87,7 +89,7 @@ function accessUntilText(c: AccessCredential) {
+   return until <= Date.now() ? `acceso caducado el ${formatDate(until)}` : `acceso hasta el ${formatDate(until)}`
+ }
+ 
+-export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps) {
++export function CredentialsDialog({ open, onOpenChange, initialTab = 'credenciales' }: CredentialsDialogProps) {
+   const supabase = useMemo(() => createClient(), [])
+ 
+   const [kind, setKind] = useState<'permanent' | 'temporary'>('temporary')
+@@ -105,9 +107,12 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
+   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
+   const [revokingId, setRevokingId] = useState<string | null>(null)
++  const [meId, setMeId] = useState<string | null>(null)
++  const [changingRoleId, setChangingRoleId] = useState<string | null>(null)
+ 
+   const load = useCallback(async () => {
+     setLoading(true)
++    supabase.auth.getUser().then(({ data }) => setMeId(data.user?.id ?? null))
+     const [{ data: creds, error: credsError }, { data: profs }, { data: mems }] = await Promise.all([
+       supabase.from('access_credentials').select('*').order('created_at', { ascending: false }),
+       supabase.from('profiles').select('*'),
+@@ -203,15 +208,28 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
+   const durationError =
+     durationInvalid && amount.trim() !== '' ? 'Introduce un número entero entre 1 hora y 365 días.' : null
+ 
++  const changeRole = async (userId: string, next: Role) => {
++    setChangingRoleId(userId)
++    setError(null)
++    const { error: rpcError } = await supabase.rpc('set_member_role', { p_user: userId, p_role: next })
++    if (rpcError) {
++      setError(rpcError.message)
++    } else {
++      setMembers((current) => current.map((m) => (m.user_id === userId ? { ...m, role: next, expires_at: next === 'admin' ? null : m.expires_at } : m)))
++    }
++    setChangingRoleId(null)
++  }
++
+   const people = useMemo(() => {
+     const byUser = new Map(members.map((m) => [m.user_id, m]))
+-    const rank = (m: WorkspaceMember | null) => (m?.role === 'admin' ? 0 : m ? 1 : 2)
++    const rank = (m: WorkspaceMember | null) => (m ? ROLES.indexOf(normalizeRole(m.role)) : ROLES.length)
+     return profiles
+       .map((profile) => ({ profile, member: byUser.get(profile.id) ?? null }))
+       .sort((a, b) => rank(a.member) - rank(b.member) || authorName(a.profile).localeCompare(authorName(b.profile)))
+   }, [members, profiles])
+   const adminCount = people.filter((p) => p.member?.role === 'admin').length
+-  const userCount = people.filter((p) => p.member && p.member.role !== 'admin').length
++  const modCount = people.filter((p) => p.member?.role === 'moderator').length
++  const supportCount = people.filter((p) => p.member && p.member.role !== 'admin' && p.member.role !== 'moderator').length
+   const pendingCount = people.filter((p) => !p.member).length
+ 
+   return (
+@@ -236,7 +254,7 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
+           </div>
+         )}
+ 
+-        <Tabs defaultValue="credenciales" className="gap-5">
++        <Tabs defaultValue={initialTab} className="gap-5">
+           <TabsList className="grid w-full grid-cols-2">
+             <TabsTrigger value="credenciales" className="gap-1.5">
+               <KeyRound className="h-3.5 w-3.5" />
+@@ -477,14 +495,18 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
+           </TabsContent>
+ 
+           <TabsContent value="personas" className="space-y-4">
+-            <div className="grid grid-cols-3 gap-2">
++            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+               <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-center">
+                 <p className="text-2xl font-bold text-violet-300">{adminCount}</p>
+                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Admin</p>
+               </div>
++              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center">
++                <p className="text-2xl font-bold text-emerald-300">{modCount}</p>
++                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Moderadores</p>
++              </div>
+               <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-center">
+-                <p className="text-2xl font-bold text-sky-300">{userCount}</p>
+-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Usuarios</p>
++                <p className="text-2xl font-bold text-sky-300">{supportCount}</p>
++                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Soporte</p>
+               </div>
+               <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-center">
+                 <p className="text-2xl font-bold text-amber-300">{pendingCount}</p>
+@@ -504,13 +526,12 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
+             ) : (
+               <ul className="space-y-2">
+                 {people.map(({ profile, member }) => {
+-                  const isAdminRole = member?.role === 'admin'
++                  const memberRole = member ? normalizeRole(member.role) : null
+                   const expired = !!member?.expires_at && new Date(member.expires_at).getTime() <= Date.now()
+-                  const role = isAdminRole
+-                    ? { label: 'Admin', className: 'border-violet-500/30 bg-violet-500/10 text-violet-300', icon: <ShieldCheck className="h-3 w-3" /> }
+-                    : member
+-                      ? { label: 'Usuario', className: 'border-sky-500/30 bg-sky-500/10 text-sky-300', icon: <User className="h-3 w-3" /> }
+-                      : { label: 'Sin acceso', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300', icon: <AlertCircle className="h-3 w-3" /> }
++                  const role = memberRole
++                    ? { label: roleLabels[memberRole], className: roleBadgeClasses[memberRole], icon: memberRole === 'admin' ? <ShieldCheck className="h-3 w-3" /> : <User className="h-3 w-3" /> }
++                    : { label: 'Sin acceso', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300', icon: <AlertCircle className="h-3 w-3" /> }
++                  const isMe = profile.id === meId
+                   const access = !member
+                     ? 'Registrado, aún no ha introducido una credencial'
+                     : expired
+@@ -528,10 +549,23 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
+                         <p className="truncate text-xs text-muted-foreground">{profile.email}</p>
+                         <p className={`text-xs ${expired || !member ? 'text-amber-300/90' : 'text-muted-foreground'}`}>{access}</p>
+                       </div>
+-                      <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${role.className}`}>
+-                        {role.icon}
+-                        {role.label}
+-                      </span>
++                      {memberRole && !isMe ? (
++                        <Select value={memberRole} onValueChange={(v) => void changeRole(profile.id, v as Role)} disabled={changingRoleId === profile.id}>
++                          <SelectTrigger className="h-8 w-36 shrink-0 bg-background text-xs" aria-label={`Rango de ${authorName(profile)}`}>
++                            {changingRoleId === profile.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SelectValue />}
++                          </SelectTrigger>
++                          <SelectContent>
++                            {ROLES.map((r) => (
++                              <SelectItem key={r} value={r}>{roleLabels[r]}</SelectItem>
++                            ))}
++                          </SelectContent>
++                        </Select>
++                      ) : (
++                        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${role.className}`}>
++                          {role.icon}
++                          {role.label}{isMe ? ' (tú)' : ''}
++                        </span>
++                      )}
+                     </li>
+                   )
+                 })}
+diff --git a/components/header.tsx b/components/header.tsx
+index b82d7f6..2f10c1b 100644
+--- a/components/header.tsx
++++ b/components/header.tsx
+@@ -1,8 +1,9 @@
+ 'use client'
+ 
+-import { useEffect, useMemo, useState } from 'react'
++import { useMemo, useState } from 'react'
+ import { createClient } from '@/lib/supabase/client'
+-import { useRouter } from 'next/navigation'
++import Link from 'next/link'
++import { usePathname, useRouter } from 'next/navigation'
+ import { Button } from '@/components/ui/button'
+ import {
+   DropdownMenu,
+@@ -12,28 +13,34 @@ import {
+   DropdownMenuTrigger,
+ } from '@/components/ui/dropdown-menu'
+ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+-import { Bookmark, Code2, KeyRound, LogOut, ServerCog, User } from 'lucide-react'
++import { Bookmark, Code2, KeyRound, ListChecks, LogOut, ServerCog, User, Users } from 'lucide-react'
+ import { CredentialsDialog } from '@/components/credentials-dialog'
+ import type { Profile } from '@/lib/types'
++import { can, roleBadgeClasses, roleLabels, type Role } from '@/lib/roles'
++import { cn } from '@/lib/utils'
+ 
+ interface HeaderProps {
+   profile: Profile | null
++  /** Rango del usuario, calculado en el servidor (evita parpadeos y clics perdidos). */
++  role: Role
+ }
+ 
+-export function Header({ profile }: HeaderProps) {
++export function Header({ profile, role }: HeaderProps) {
+   const router = useRouter()
++  const pathname = usePathname()
+   const supabase = useMemo(() => createClient(), [])
+-  const [isAdmin, setIsAdmin] = useState(false)
++  const isAdmin = can.manageMembers(role)
+   const [credentialsOpen, setCredentialsOpen] = useState(false)
++  const [dialogTab, setDialogTab] = useState<'credenciales' | 'personas'>('credenciales')
+ 
+-  // Solo el administrador ve la opción de generar credenciales.
+-  useEffect(() => {
+-    let active = true
+-    supabase.rpc('is_admin').then(({ data }) => {
+-      if (active) setIsAdmin(data === true)
+-    })
+-    return () => { active = false }
+-  }, [supabase])
++  const openDialog = (tab: 'credenciales' | 'personas') => {
++    setDialogTab(tab)
++    setCredentialsOpen(true)
++  }
++
++  // <Link> precarga la página y navega con un solo clic.
++  const navClass = (href: string) =>
++    cn('gap-1.5', pathname.startsWith(href) && 'bg-accent text-accent-foreground')
+ 
+   const handleSignOut = async () => {
+     await supabase.auth.signOut()
+@@ -63,10 +70,18 @@ export function Header({ profile }: HeaderProps) {
+             </span>
+           </div>
+           <nav className="ml-4 hidden items-center gap-1 border-l border-border/60 pl-4 sm:flex" aria-label="Navegación principal">
+-            <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard')}>Tareas</Button>
+-            <Button variant="ghost" size="sm" onClick={() => router.push('/resources')}>
+-              <Bookmark data-icon="inline-start" />Recursos
++            <Button asChild variant="ghost" size="sm" className={navClass('/dashboard')}>
++              <Link href="/dashboard" prefetch aria-current={pathname.startsWith('/dashboard') ? 'page' : undefined}>
++                <ListChecks className="h-4 w-4" />Tareas
++              </Link>
+             </Button>
++            {can.viewResources(role) && (
++              <Button asChild variant="ghost" size="sm" className={navClass('/resources')}>
++                <Link href="/resources" prefetch aria-current={pathname.startsWith('/resources') ? 'page' : undefined}>
++                  <Bookmark className="h-4 w-4" />Recursos
++                </Link>
++              </Button>
++            )}
+           </nav>
+         </div>
+ 
+@@ -91,13 +106,9 @@ export function Header({ profile }: HeaderProps) {
+                 <span className="flex items-center gap-1.5 text-sm font-medium">
+                   {profile?.display_name || 'Usuario'}
+                   <span
+-                    className={`rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${
+-                      isAdmin
+-                        ? 'border-violet-500/30 bg-violet-500/10 text-violet-300'
+-                        : 'border-sky-500/30 bg-sky-500/10 text-sky-300'
+-                    }`}
++                    className={`rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${roleBadgeClasses[role]}`}
+                   >
+-                    {isAdmin ? 'Admin' : 'Usuario'}
++                    {roleLabels[role]}
+                   </span>
+                 </span>
+                 <span className="text-xs text-muted-foreground">{profile?.email}</span>
+@@ -109,7 +120,13 @@ export function Header({ profile }: HeaderProps) {
+               Perfil
+             </DropdownMenuItem>
+             {isAdmin && (
+-              <DropdownMenuItem onClick={() => setCredentialsOpen(true)}>
++              <DropdownMenuItem onClick={() => openDialog('personas')}>
++                <Users className="mr-2 h-4 w-4" />
++                Miembros y rangos
++              </DropdownMenuItem>
++            )}
++            {isAdmin && (
++              <DropdownMenuItem onClick={() => openDialog('credenciales')}>
+                 <KeyRound className="mr-2 h-4 w-4" />
+                 Generar credenciales
+               </DropdownMenuItem>
+@@ -122,7 +139,7 @@ export function Header({ profile }: HeaderProps) {
+           </DropdownMenuContent>
+         </DropdownMenu>
+       </div>
+-      {isAdmin && <CredentialsDialog open={credentialsOpen} onOpenChange={setCredentialsOpen} />}
++      {isAdmin && <CredentialsDialog open={credentialsOpen} onOpenChange={setCredentialsOpen} initialTab={dialogTab} />}
+     </header>
+   )
+ }
+diff --git a/components/image-lightbox.tsx b/components/image-lightbox.tsx
+index 8c08b70..e8dd694 100644
+--- a/components/image-lightbox.tsx
++++ b/components/image-lightbox.tsx
+@@ -15,11 +15,14 @@ export function ImageLightbox({
+   index,
+   onIndexChange,
+   onClose,
++  allowDownload = true,
+ }: {
+   images: LightboxImage[]
+   index: number | null
+   onIndexChange: (index: number) => void
+   onClose: () => void
++  /** false → sin botones de "Abrir original" ni "Descargar" (moderadores). */
++  allowDownload?: boolean
+ }) {
+   const image = index !== null ? images[index] : null
+   const hasMany = images.length > 1
+@@ -49,16 +52,20 @@ export function ImageLightbox({
+               {hasMany && (
+                 <span className="text-xs text-white/60">{(index ?? 0) + 1} / {images.length}</span>
+               )}
++              {allowDownload && (
+               <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white">
+                 <a href={image.src} target="_blank" rel="noopener noreferrer" title="Abrir original">
+                   <ExternalLink className="h-4 w-4" />
+                 </a>
+               </Button>
++              )}
++              {allowDownload && (
+               <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white">
+                 <a href={image.src} download={image.name} title="Descargar">
+                   <Download className="h-4 w-4" />
+                 </a>
+               </Button>
++              )}
+               <DialogClose asChild>
+                 <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/10 hover:text-white" title="Cerrar">
+                   <X className="h-4 w-4" />
+diff --git a/components/resource-detail-dialog.tsx b/components/resource-detail-dialog.tsx
+index 2a46287..be7bf82 100644
+--- a/components/resource-detail-dialog.tsx
++++ b/components/resource-detail-dialog.tsx
+@@ -32,6 +32,9 @@ interface ResourceDetailDialogProps {
+   open: boolean
+   onOpenChange: (open: boolean) => void
+   onEdit: (resource: ResourceWithAttachments) => void
++  /** Admin: descargas, referencias y edición. Moderador: solo lectura. */
++  canDownload?: boolean
++  canEdit?: boolean
+ }
+ 
+ const mediaUrl = (path: string) => (path.startsWith('r2/') ? `/api/file?pathname=${encodeURIComponent(path)}` : path)
+@@ -72,7 +75,7 @@ function SectionTitle({ icon: Icon, children, count }: { icon: typeof Video; chi
+   )
+ }
+ 
+-export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: ResourceDetailDialogProps) {
++export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit, canDownload = true, canEdit = true }: ResourceDetailDialogProps) {
+   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+   const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set())
+ 
+@@ -153,7 +156,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+                 <SectionTitle icon={FileText}>Descripción</SectionTitle>
+                 {resource.description ? (
+                   <p className="whitespace-pre-wrap break-words rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm leading-relaxed text-foreground/85">
+-                    <Linkified text={resource.description} />
++                    {canDownload ? <Linkified text={resource.description} /> : resource.description}
+                   </p>
+                 ) : (
+                   <p className="rounded-xl border border-dashed border-border/60 px-3 py-4 text-center text-sm text-muted-foreground">Sin descripción.</p>
+@@ -226,24 +229,31 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+                 <section className="space-y-3">
+                   <SectionTitle icon={FileText} count={files.length}>Archivos</SectionTitle>
+                   <div className="grid gap-2">
+-                    {files.map((file) => (
+-                      <a
+-                        key={file.id}
+-                        href={mediaUrl(file.file_path)}
+-                        target="_blank"
+-                        rel="noreferrer"
+-                        className="group flex items-center gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 transition-colors hover:border-border hover:bg-card/70"
+-                      >
+-                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/30 to-sky-500/10 ring-1 ring-violet-500/30">
+-                          <FileText className="h-5 w-5 text-violet-200" />
+-                        </span>
+-                        <span className="min-w-0 flex-1">
+-                          <span className="block truncate text-sm font-medium">{file.file_name}</span>
+-                          <span className="block text-xs text-muted-foreground">{formatSize(file.file_size)}</span>
+-                        </span>
+-                        <Download className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+-                      </a>
+-                    ))}
++                    {files.map((file) => {
++                      const rowClass = 'group flex items-center gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 transition-colors hover:border-border hover:bg-card/70'
++                      const inner = (
++                        <>
++                          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/30 to-sky-500/10 ring-1 ring-violet-500/30">
++                            <FileText className="h-5 w-5 text-violet-200" />
++                          </span>
++                          <span className="min-w-0 flex-1">
++                            <span className="block truncate text-sm font-medium">{file.file_name}</span>
++                            <span className="block text-xs text-muted-foreground">{formatSize(file.file_size)}</span>
++                          </span>
++                          {canDownload && <Download className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />}
++                        </>
++                      )
++                      // Sin permiso de descarga (moderador): solo nombre y tamaño, nada pulsable.
++                      return canDownload && file.file_path ? (
++                        <a key={file.id} href={mediaUrl(file.file_path)} target="_blank" rel="noreferrer" className={rowClass}>
++                          {inner}
++                        </a>
++                      ) : (
++                        <div key={file.id} className={rowClass}>
++                          {inner}
++                        </div>
++                      )
++                    })}
+                   </div>
+                 </section>
+               )}
+@@ -251,6 +261,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+ 
+             {/* Barra lateral */}
+             <aside className="shrink-0 space-y-5 border-t border-border/60 bg-muted/20 p-5 lg:w-80 lg:overflow-y-auto lg:border-l lg:border-t-0">
++              {canDownload && (
+               <div className="space-y-2">
+                 <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Enlaces</p>
+                 {resource.url || resource.download_url ? (
+@@ -270,6 +281,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+                   <p className="flex items-center gap-2 text-sm text-muted-foreground"><Link2 className="size-4" />Sin enlaces</p>
+                 )}
+               </div>
++              )}
+ 
+               {resource.tags.length > 0 && (
+                 <div className="space-y-2">
+@@ -282,7 +294,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+                 </div>
+               )}
+ 
+-              {resource.notes && (
++              {canDownload && resource.notes && (
+                 <div className="space-y-2">
+                   <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                     <StickyNote className="h-3.5 w-3.5" />
+@@ -307,6 +319,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+                 )}
+               </dl>
+ 
++              {canEdit && (
+               <Button
+                 variant="secondary"
+                 className="w-full"
+@@ -318,6 +331,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+                 <Pencil className="mr-2 h-4 w-4" />
+                 Editar recurso
+               </Button>
++              )}
+             </aside>
+           </div>
+         </DialogContent>
+@@ -328,6 +342,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
+         index={lightboxIndex}
+         onIndexChange={setLightboxIndex}
+         onClose={() => setLightboxIndex(null)}
++        allowDownload={canDownload}
+       />
+     </>
+   )
+diff --git a/components/task-detail.tsx b/components/task-detail.tsx
+index e10a15d..120df01 100644
+--- a/components/task-detail.tsx
++++ b/components/task-detail.tsx
+@@ -74,6 +74,8 @@ interface TaskDetailProps {
+   onOpenChange: (open: boolean) => void
+   categories: Category[]
+   profiles?: Profile[]
++  /** Solo el admin crea recursos. */
++  canMoveToResources?: boolean
+   onUpdate: () => void
+   onDelete: () => void
+ }
+@@ -242,7 +244,7 @@ function SectionTitle({
+   )
+ }
+ 
+-export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], onUpdate, onDelete }: TaskDetailProps) {
++export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], canMoveToResources = false, onUpdate, onDelete }: TaskDetailProps) {
+   const [newSubtask, setNewSubtask] = useState('')
+   const [newComment, setNewComment] = useState('')
+   const [sendingComment, setSendingComment] = useState(false)
+@@ -1327,10 +1329,12 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
+                 </div>
+               </dl>
+ 
+-              <Button variant="secondary" className="w-full" onClick={() => setMoveOpen(true)}>
+-                <Bookmark className="mr-2 h-4 w-4" />
+-                Mover a recursos
+-              </Button>
++              {canMoveToResources && (
++                <Button variant="secondary" className="w-full" onClick={() => setMoveOpen(true)}>
++                  <Bookmark className="mr-2 h-4 w-4" />
++                  Mover a recursos
++                </Button>
++              )}
+ 
+               <Button
+                 variant="outline"
+diff --git a/components/types.ts b/components/types.ts
+index 28ef7d4..472b31f 100644
+--- a/components/types.ts
++++ b/components/types.ts
+@@ -8,7 +8,7 @@ export interface Task { id: string; user_id: string; category_id: string | null;
+ export interface Subtask { id: string; task_id: string; title: string; completed: boolean; created_at: string }
+ export interface Comment { id: string; task_id: string; user_id: string; content: string; created_at: string; edited_at?: string | null; profile?: Profile }
+ export interface AccessCredential { id: string; code: string; kind: 'permanent' | 'temporary'; duration_hours: number | null; note: string | null; created_by: string | null; created_at: string; redeemed_by: string | null; redeemed_at: string | null; revoked_at: string | null }
+-export interface WorkspaceMember { user_id: string; role: 'admin' | 'member'; expires_at: string | null; credential_id: string | null; granted_at: string }
++export interface WorkspaceMember { user_id: string; role: 'admin' | 'moderator' | 'support'; expires_at: string | null; credential_id: string | null; granted_at: string }
+ export interface Attachment { id: string; task_id: string; user_id: string; file_name: string; file_path: string; file_type: string; file_size: number; created_at: string }
+ export interface TaskWithRelations extends Task { category: Category | null; subtasks: Subtask[]; comments: (Comment & { profile: Profile })[]; attachments: Attachment[] }
+ export type ResourceType = 'script' | 'mlo' | 'vehicle' | 'map' | 'ui' | 'tool' | 'other'
+diff --git a/lib/access.ts b/lib/access.ts
+index 688c885..0b268d9 100644
+--- a/lib/access.ts
++++ b/lib/access.ts
+@@ -1,9 +1,12 @@
+ import type { SupabaseClient } from '@supabase/supabase-js'
++import { normalizeRole, type Role } from '@/lib/roles'
+ 
+ export interface AccessStatus {
+   /** Tiene acceso vigente al espacio de trabajo. */
+   isMember: boolean
+   isAdmin: boolean
++  /** Rango vigente (null si no tiene acceso). */
++  role: Role | null
+   /** Tuvo un acceso temporal y ya ha caducado. */
+   expired: boolean
+   /** null = permanente. */
+@@ -25,19 +28,21 @@ export async function getAccessStatus(supabase: SupabaseClient, userId: string):
+   if (error) {
+     // Migración aún sin ejecutar: no se bloquea a todo el mundo fuera de la app.
+     if (error.code === 'PGRST205' || error.code === '42P01') {
+-      return { isMember: true, isAdmin: false, expired: false, expiresAt: null }
++      return { isMember: true, isAdmin: false, role: 'support', expired: false, expiresAt: null }
+     }
+-    return { isMember: false, isAdmin: false, expired: false, expiresAt: null }
++    return { isMember: false, isAdmin: false, role: null, expired: false, expiresAt: null }
+   }
+ 
+   if (!data) {
+-    return { isMember: false, isAdmin: false, expired: false, expiresAt: null }
++    return { isMember: false, isAdmin: false, role: null, expired: false, expiresAt: null }
+   }
+ 
+   const expired = !!data.expires_at && new Date(data.expires_at).getTime() <= Date.now()
++  const role = normalizeRole(data.role)
+   return {
+     isMember: !expired,
+-    isAdmin: data.role === 'admin' && !expired,
++    isAdmin: role === 'admin' && !expired,
++    role: expired ? null : role,
+     expired,
+     expiresAt: data.expires_at,
+   }
+diff --git a/lib/roles.ts b/lib/roles.ts
+new file mode 100644
+index 0000000..f69035d
+--- /dev/null
++++ b/lib/roles.ts
+@@ -0,0 +1,34 @@
++export type Role = 'admin' | 'moderator' | 'support'
++
++export const ROLES: Role[] = ['admin', 'moderator', 'support']
++
++export const roleLabels: Record<Role, string> = {
++  admin: 'Admin',
++  moderator: 'Moderador',
++  support: 'Soporte',
++}
++
++export const roleBadgeClasses: Record<Role, string> = {
++  admin: 'border-violet-500/30 bg-violet-500/10 text-violet-300',
++  moderator: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
++  support: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
++}
++
++/** Acepta valores antiguos ('member') y desconocidos. */
++export function normalizeRole(value: unknown): Role {
++  if (value === 'admin' || value === 'moderator' || value === 'support') return value
++  return 'support'
++}
++
++/**
++ * Permisos por rango. Es la única fuente de verdad en el cliente y en las
++ * rutas /api; la barrera real está en Supabase (ver migración 20261022000000_roles.sql).
++ */
++export const can = {
++  manageMembers: (r?: Role | null) => r === 'admin',
++  manageCredentials: (r?: Role | null) => r === 'admin',
++  viewResources: (r?: Role | null) => r === 'admin' || r === 'moderator',
++  editResources: (r?: Role | null) => r === 'admin',
++  downloadResources: (r?: Role | null) => r === 'admin',
++  openReferences: (r?: Role | null) => r === 'admin',
++}
+diff --git a/lib/types.ts b/lib/types.ts
+index 0de4430..472b31f 100644
+--- a/lib/types.ts
++++ b/lib/types.ts
+@@ -8,6 +8,7 @@ export interface Task { id: string; user_id: string; category_id: string | null;
+ export interface Subtask { id: string; task_id: string; title: string; completed: boolean; created_at: string }
+ export interface Comment { id: string; task_id: string; user_id: string; content: string; created_at: string; edited_at?: string | null; profile?: Profile }
+ export interface AccessCredential { id: string; code: string; kind: 'permanent' | 'temporary'; duration_hours: number | null; note: string | null; created_by: string | null; created_at: string; redeemed_by: string | null; redeemed_at: string | null; revoked_at: string | null }
++export interface WorkspaceMember { user_id: string; role: 'admin' | 'moderator' | 'support'; expires_at: string | null; credential_id: string | null; granted_at: string }
+ export interface Attachment { id: string; task_id: string; user_id: string; file_name: string; file_path: string; file_type: string; file_size: number; created_at: string }
+ export interface TaskWithRelations extends Task { category: Category | null; subtasks: Subtask[]; comments: (Comment & { profile: Profile })[]; attachments: Attachment[] }
+ export type ResourceType = 'script' | 'mlo' | 'vehicle' | 'map' | 'ui' | 'tool' | 'other'
+diff --git a/supabase/migrations/20261022000000_roles.sql b/supabase/migrations/20261022000000_roles.sql
+new file mode 100644
+index 0000000..f81d6cb
+--- /dev/null
++++ b/supabase/migrations/20261022000000_roles.sql
+@@ -0,0 +1,263 @@
++-- =====================================================================
++-- Rangos: admin / moderator / support
++--
++--  · admin      → todo: miembros, rangos, recursos completos (descargas,
++--                 referencias, notas) y credenciales.
++--  · moderator  → ve el apartado de Recursos en SOLO LECTURA: título,
++--                 descripción, imágenes y vídeos. Sin descargas, sin
++--                 referencias, sin notas privadas, sin editar.
++--  · support    → NO ve Recursos. Sí usa las tareas como hasta ahora.
++--
++-- Ejecutar UNA vez en Supabase -> SQL Editor (después de las migraciones
++-- anteriores). Los antiguos "member" pasan a "support".
++-- =====================================================================
++
++-- 1) Roles ---------------------------------------------------------------
++alter table public.workspace_members drop constraint if exists workspace_members_role_check;
++update public.workspace_members set role = 'support' where role = 'member';
++alter table public.workspace_members alter column role set default 'support';
++alter table public.workspace_members
++  add constraint workspace_members_role_check check (role in ('admin', 'moderator', 'support'));
++
++-- 2) Funciones de ayuda ---------------------------------------------------
++create or replace function public.my_role()
++returns text
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select m.role from public.workspace_members m
++  where m.user_id = auth.uid()
++    and (m.expires_at is null or m.expires_at > now());
++$$;
++
++create or replace function public.can_view_resources()
++returns boolean
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select coalesce(public.my_role() in ('admin', 'moderator'), false);
++$$;
++
++-- Cambia el rango de una persona (solo administrador).
++create or replace function public.set_member_role(p_user uuid, p_role text)
++returns void
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_old text;
++begin
++  if not public.is_admin() then
++    raise exception 'Solo el administrador puede cambiar rangos' using errcode = '42501';
++  end if;
++  if p_role not in ('admin', 'moderator', 'support') then
++    raise exception 'Rango no válido';
++  end if;
++
++  select role into v_old from public.workspace_members where user_id = p_user for update;
++  if not found then
++    raise exception 'Esa persona todavía no tiene acceso al espacio de trabajo';
++  end if;
++
++  if p_user = auth.uid() and p_role <> 'admin' then
++    raise exception 'No puedes quitarte a ti mismo el rango de administrador';
++  end if;
++
++  if v_old = 'admin' and p_role <> 'admin'
++     and (select count(*) from public.workspace_members where role = 'admin') <= 1 then
++    raise exception 'Tiene que quedar al menos un administrador';
++  end if;
++
++  -- Un administrador no puede tener el acceso caducable.
++  update public.workspace_members
++  set role = p_role,
++      expires_at = case when p_role = 'admin' then null else expires_at end
++  where user_id = p_user;
++end;
++$$;
++
++-- 3) Canjear credencial: los nuevos entran como "support" -----------------
++create or replace function public.redeem_access_code(p_code text)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_user       uuid := auth.uid();
++  v_norm       text := regexp_replace(upper(coalesce(p_code, '')), '[^A-Z0-9]', '', 'g');
++  v_cred       public.access_credentials;
++  v_member     public.workspace_members;
++  v_has_member boolean;
++  v_expires    timestamptz;
++begin
++  if v_user is null then
++    raise exception 'Debes iniciar sesión' using errcode = '28000';
++  end if;
++  if length(v_norm) < 8 then
++    raise exception 'Credencial no válida';
++  end if;
++
++  -- Bloquea la fila para que dos personas no puedan canjear el mismo código a la vez.
++  select * into v_cred
++  from public.access_credentials
++  where replace(code, '-', '') = v_norm
++  for update;
++
++  if not found or v_cred.revoked_at is not null or v_cred.redeemed_at is not null then
++    raise exception 'Credencial no válida, revocada o ya utilizada';
++  end if;
++
++  select * into v_member from public.workspace_members where user_id = v_user;
++  v_has_member := found;
++
++  if v_cred.kind = 'permanent' then
++    v_expires := null;
++  else
++    v_expires := now() + make_interval(hours => v_cred.duration_hours);
++    -- Nunca se acorta un acceso que ya dura más (o que es permanente).
++    if v_has_member and (v_member.expires_at is null or v_member.expires_at > v_expires) then
++      v_expires := v_member.expires_at;
++    end if;
++  end if;
++
++  -- Un administrador no puede perder su acceso al canjear una credencial.
++  if v_has_member and v_member.role = 'admin' then
++    v_expires := null;
++  end if;
++
++  insert into public.workspace_members (user_id, role, expires_at, credential_id)
++  values (v_user, 'support', v_expires, v_cred.id)
++  on conflict (user_id) do update
++    set expires_at    = excluded.expires_at,
++        credential_id = excluded.credential_id;
++
++  update public.access_credentials
++  set redeemed_by = v_user, redeemed_at = now()
++  where id = v_cred.id;
++
++  return jsonb_build_object('kind', v_cred.kind, 'expires_at', v_expires);
++end;
++$$;
++
++-- 4) Recursos: solo el admin toca las tablas directamente --------------------
++-- Moderadores y soporte NO tienen acceso directo a las tablas (así no pueden
++-- leer url / download_url / file_path con el cliente de Supabase). El
++-- moderador lee a través de list_resources(), que ya va "recortada".
++
++drop policy if exists "admins read all resources" on public.resources;
++create policy "admins read all resources"
++  on public.resources for select to authenticated
++  using (public.is_admin());
++
++drop policy if exists "admins read all resource attachments" on public.resource_attachments;
++create policy "admins read all resource attachments"
++  on public.resource_attachments for select to authenticated
++  using (public.is_admin());
++
++do $$
++declare
++  t text;
++begin
++  foreach t in array array['resources', 'resource_attachments']
++  loop
++    if to_regclass('public.' || t) is not null then
++      execute format('drop policy if exists "resources admin only" on public.%I', t);
++      execute format(
++        'create policy "resources admin only" on public.%I as restrictive for all to authenticated '
++        || 'using (public.is_admin()) with check (public.is_admin())', t);
++    end if;
++  end loop;
++end $$;
++
++-- Lista de recursos según el rango:
++--   admin     → todo
++--   moderator → sin url, download_url ni notes; los archivos van sin file_path
++--               (solo nombre y tamaño); imágenes y vídeos se mantienen
++--   support   → error
++create or replace function public.list_resources()
++returns jsonb
++language plpgsql
++stable
++security definer
++set search_path = public
++as $$
++declare
++  v_role text := public.my_role();
++begin
++  if v_role is null or v_role not in ('admin', 'moderator') then
++    raise exception 'No tienes permiso para ver los recursos' using errcode = '42501';
++  end if;
++
++  return coalesce((
++    select jsonb_agg(
++      (case when v_role = 'admin'
++            then to_jsonb(r)
++            else to_jsonb(r) - 'url' - 'download_url' - 'notes' end)
++      || jsonb_build_object('resource_attachments', coalesce((
++        select jsonb_agg(
++          case when v_role = 'admin'
++                 or a.file_type like 'image/%'
++                 or a.file_type = 'video/youtube'
++               then to_jsonb(a)
++               else to_jsonb(a) - 'file_path' end
++          order by a.position
++        )
++        from public.resource_attachments a
++        where a.resource_id = r.id
++      ), '[]'::jsonb))
++      order by r.created_at desc
++    )
++    from public.resources r
++  ), '[]'::jsonb);
++end;
++$$;
++
++-- ¿Puede esta persona abrir este archivo de recurso?
++--   'not_resource' → no es un adjunto de recurso (se aplica la regla de siempre)
++--   'allowed'      → admin (todo) o moderador (solo imágenes)
++--   'denied'       → es un adjunto de recurso y su rango no lo permite
++create or replace function public.resource_file_access(p_path text)
++returns text
++language plpgsql
++stable
++security definer
++set search_path = public
++as $$
++declare
++  v_type text;
++  v_role text := public.my_role();
++begin
++  select a.file_type into v_type
++  from public.resource_attachments a
++  where a.file_path = p_path
++  limit 1;
++
++  if not found then
++    return 'not_resource';
++  end if;
++  if v_role = 'admin' then
++    return 'allowed';
++  end if;
++  if v_role = 'moderator' and v_type like 'image/%' then
++    return 'allowed';
++  end if;
++  return 'denied';
++end;
++$$;
++
++revoke all on function public.my_role()                         from public, anon;
++revoke all on function public.can_view_resources()              from public, anon;
++revoke all on function public.set_member_role(uuid, text)       from public, anon;
++revoke all on function public.list_resources()                  from public, anon;
++revoke all on function public.resource_file_access(text)        from public, anon;
++grant execute on function public.my_role()                      to authenticated;
++grant execute on function public.can_view_resources()           to authenticated;
++grant execute on function public.set_member_role(uuid, text)    to authenticated;
++grant execute on function public.list_resources()               to authenticated;
++grant execute on function public.resource_file_access(text)     to authenticated;

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { AccessCredential, Profile, WorkspaceMember } from '@/lib/types'
+import { ROLES, roleBadgeClasses, roleLabels, normalizeRole, type Role } from '@/lib/roles'
 import { authorName } from '@/components/task-card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,6 +42,7 @@ import { es } from 'date-fns/locale'
 interface CredentialsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  initialTab?: 'credenciales' | 'personas'
 }
 
 // Atajos: rellenan el campo de tiempo, que también se puede escribir a mano.
@@ -87,7 +89,7 @@ function accessUntilText(c: AccessCredential) {
   return until <= Date.now() ? `acceso caducado el ${formatDate(until)}` : `acceso hasta el ${formatDate(until)}`
 }
 
-export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps) {
+export function CredentialsDialog({ open, onOpenChange, initialTab = 'credenciales' }: CredentialsDialogProps) {
   const supabase = useMemo(() => createClient(), [])
 
   const [kind, setKind] = useState<'permanent' | 'temporary'>('temporary')
@@ -105,9 +107,12 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
   const [revokingId, setRevokingId] = useState<string | null>(null)
+  const [meId, setMeId] = useState<string | null>(null)
+  const [changingRoleId, setChangingRoleId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
+    supabase.auth.getUser().then(({ data }) => setMeId(data.user?.id ?? null))
     const [{ data: creds, error: credsError }, { data: profs }, { data: mems }] = await Promise.all([
       supabase.from('access_credentials').select('*').order('created_at', { ascending: false }),
       supabase.from('profiles').select('*'),
@@ -203,15 +208,28 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
   const durationError =
     durationInvalid && amount.trim() !== '' ? 'Introduce un número entero entre 1 hora y 365 días.' : null
 
+  const changeRole = async (userId: string, next: Role) => {
+    setChangingRoleId(userId)
+    setError(null)
+    const { error: rpcError } = await supabase.rpc('set_member_role', { p_user: userId, p_role: next })
+    if (rpcError) {
+      setError(rpcError.message)
+    } else {
+      setMembers((current) => current.map((m) => (m.user_id === userId ? { ...m, role: next, expires_at: next === 'admin' ? null : m.expires_at } : m)))
+    }
+    setChangingRoleId(null)
+  }
+
   const people = useMemo(() => {
     const byUser = new Map(members.map((m) => [m.user_id, m]))
-    const rank = (m: WorkspaceMember | null) => (m?.role === 'admin' ? 0 : m ? 1 : 2)
+    const rank = (m: WorkspaceMember | null) => (m ? ROLES.indexOf(normalizeRole(m.role)) : ROLES.length)
     return profiles
       .map((profile) => ({ profile, member: byUser.get(profile.id) ?? null }))
       .sort((a, b) => rank(a.member) - rank(b.member) || authorName(a.profile).localeCompare(authorName(b.profile)))
   }, [members, profiles])
   const adminCount = people.filter((p) => p.member?.role === 'admin').length
-  const userCount = people.filter((p) => p.member && p.member.role !== 'admin').length
+  const modCount = people.filter((p) => p.member?.role === 'moderator').length
+  const supportCount = people.filter((p) => p.member && p.member.role !== 'admin' && p.member.role !== 'moderator').length
   const pendingCount = people.filter((p) => !p.member).length
 
   return (
@@ -236,7 +254,7 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
           </div>
         )}
 
-        <Tabs defaultValue="credenciales" className="gap-5">
+        <Tabs defaultValue={initialTab} className="gap-5">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="credenciales" className="gap-1.5">
               <KeyRound className="h-3.5 w-3.5" />
@@ -477,14 +495,18 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
           </TabsContent>
 
           <TabsContent value="personas" className="space-y-4">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-center">
                 <p className="text-2xl font-bold text-violet-300">{adminCount}</p>
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Admin</p>
               </div>
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center">
+                <p className="text-2xl font-bold text-emerald-300">{modCount}</p>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Moderadores</p>
+              </div>
               <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-center">
-                <p className="text-2xl font-bold text-sky-300">{userCount}</p>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Usuarios</p>
+                <p className="text-2xl font-bold text-sky-300">{supportCount}</p>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Soporte</p>
               </div>
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-center">
                 <p className="text-2xl font-bold text-amber-300">{pendingCount}</p>
@@ -504,13 +526,12 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
             ) : (
               <ul className="space-y-2">
                 {people.map(({ profile, member }) => {
-                  const isAdminRole = member?.role === 'admin'
+                  const memberRole = member ? normalizeRole(member.role) : null
                   const expired = !!member?.expires_at && new Date(member.expires_at).getTime() <= Date.now()
-                  const role = isAdminRole
-                    ? { label: 'Admin', className: 'border-violet-500/30 bg-violet-500/10 text-violet-300', icon: <ShieldCheck className="h-3 w-3" /> }
-                    : member
-                      ? { label: 'Usuario', className: 'border-sky-500/30 bg-sky-500/10 text-sky-300', icon: <User className="h-3 w-3" /> }
-                      : { label: 'Sin acceso', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300', icon: <AlertCircle className="h-3 w-3" /> }
+                  const role = memberRole
+                    ? { label: roleLabels[memberRole], className: roleBadgeClasses[memberRole], icon: memberRole === 'admin' ? <ShieldCheck className="h-3 w-3" /> : <User className="h-3 w-3" /> }
+                    : { label: 'Sin acceso', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300', icon: <AlertCircle className="h-3 w-3" /> }
+                  const isMe = profile.id === meId
                   const access = !member
                     ? 'Registrado, aún no ha introducido una credencial'
                     : expired
@@ -528,10 +549,23 @@ export function CredentialsDialog({ open, onOpenChange }: CredentialsDialogProps
                         <p className="truncate text-xs text-muted-foreground">{profile.email}</p>
                         <p className={`text-xs ${expired || !member ? 'text-amber-300/90' : 'text-muted-foreground'}`}>{access}</p>
                       </div>
-                      <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${role.className}`}>
-                        {role.icon}
-                        {role.label}
-                      </span>
+                      {memberRole && !isMe ? (
+                        <Select value={memberRole} onValueChange={(v) => void changeRole(profile.id, v as Role)} disabled={changingRoleId === profile.id}>
+                          <SelectTrigger className="h-8 w-36 shrink-0 bg-background text-xs" aria-label={`Rango de ${authorName(profile)}`}>
+                            {changingRoleId === profile.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SelectValue />}
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ROLES.map((r) => (
+                              <SelectItem key={r} value={r}>{roleLabels[r]}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${role.className}`}>
+                          {role.icon}
+                          {role.label}{isMe ? ' (tú)' : ''}
+                        </span>
+                      )}
                     </li>
                   )
                 })}

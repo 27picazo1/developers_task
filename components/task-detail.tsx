@@ -74,6 +74,8 @@ interface TaskDetailProps {
   onOpenChange: (open: boolean) => void
   categories: Category[]
   profiles?: Profile[]
+  /** Solo el admin crea recursos. */
+  canMoveToResources?: boolean
   onUpdate: () => void
   onDelete: () => void
 }
@@ -242,7 +244,7 @@ function SectionTitle({
   )
 }
 
-export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], onUpdate, onDelete }: TaskDetailProps) {
+export function TaskDetail({ task, open, onOpenChange, categories, profiles = [], canMoveToResources = false, onUpdate, onDelete }: TaskDetailProps) {
   const [newSubtask, setNewSubtask] = useState('')
   const [newComment, setNewComment] = useState('')
   const [sendingComment, setSendingComment] = useState(false)
@@ -1327,10 +1329,12 @@ export function TaskDetail({ task, open, onOpenChange, categories, profiles = []
                 </div>
               </dl>
 
-              <Button variant="secondary" className="w-full" onClick={() => setMoveOpen(true)}>
-                <Bookmark className="mr-2 h-4 w-4" />
-                Mover a recursos
-              </Button>
+              {canMoveToResources && (
+                <Button variant="secondary" className="w-full" onClick={() => setMoveOpen(true)}>
+                  <Bookmark className="mr-2 h-4 w-4" />
+                  Mover a recursos
+                </Button>
+              )}
 
               <Button
                 variant="outline"

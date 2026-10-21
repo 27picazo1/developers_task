@@ -32,6 +32,9 @@ interface ResourceDetailDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onEdit: (resource: ResourceWithAttachments) => void
+  /** Admin: descargas, referencias y edición. Moderador: solo lectura. */
+  canDownload?: boolean
+  canEdit?: boolean
 }
 
 const mediaUrl = (path: string) => (path.startsWith('r2/') ? `/api/file?pathname=${encodeURIComponent(path)}` : path)
@@ -72,7 +75,7 @@ function SectionTitle({ icon: Icon, children, count }: { icon: typeof Video; chi
   )
 }
 
-export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: ResourceDetailDialogProps) {
+export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit, canDownload = true, canEdit = true }: ResourceDetailDialogProps) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set())
 
@@ -153,7 +156,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
                 <SectionTitle icon={FileText}>Descripción</SectionTitle>
                 {resource.description ? (
                   <p className="whitespace-pre-wrap break-words rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm leading-relaxed text-foreground/85">
-                    <Linkified text={resource.description} />
+                    {canDownload ? <Linkified text={resource.description} /> : resource.description}
                   </p>
                 ) : (
                   <p className="rounded-xl border border-dashed border-border/60 px-3 py-4 text-center text-sm text-muted-foreground">Sin descripción.</p>
@@ -226,24 +229,31 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
                 <section className="space-y-3">
                   <SectionTitle icon={FileText} count={files.length}>Archivos</SectionTitle>
                   <div className="grid gap-2">
-                    {files.map((file) => (
-                      <a
-                        key={file.id}
-                        href={mediaUrl(file.file_path)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group flex items-center gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 transition-colors hover:border-border hover:bg-card/70"
-                      >
-                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/30 to-sky-500/10 ring-1 ring-violet-500/30">
-                          <FileText className="h-5 w-5 text-violet-200" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">{file.file_name}</span>
-                          <span className="block text-xs text-muted-foreground">{formatSize(file.file_size)}</span>
-                        </span>
-                        <Download className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
-                      </a>
-                    ))}
+                    {files.map((file) => {
+                      const rowClass = 'group flex items-center gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 transition-colors hover:border-border hover:bg-card/70'
+                      const inner = (
+                        <>
+                          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/30 to-sky-500/10 ring-1 ring-violet-500/30">
+                            <FileText className="h-5 w-5 text-violet-200" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{file.file_name}</span>
+                            <span className="block text-xs text-muted-foreground">{formatSize(file.file_size)}</span>
+                          </span>
+                          {canDownload && <Download className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />}
+                        </>
+                      )
+                      // Sin permiso de descarga (moderador): solo nombre y tamaño, nada pulsable.
+                      return canDownload && file.file_path ? (
+                        <a key={file.id} href={mediaUrl(file.file_path)} target="_blank" rel="noreferrer" className={rowClass}>
+                          {inner}
+                        </a>
+                      ) : (
+                        <div key={file.id} className={rowClass}>
+                          {inner}
+                        </div>
+                      )
+                    })}
                   </div>
                 </section>
               )}
@@ -251,6 +261,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
 
             {/* Barra lateral */}
             <aside className="shrink-0 space-y-5 border-t border-border/60 bg-muted/20 p-5 lg:w-80 lg:overflow-y-auto lg:border-l lg:border-t-0">
+              {canDownload && (
               <div className="space-y-2">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Enlaces</p>
                 {resource.url || resource.download_url ? (
@@ -270,6 +281,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
                   <p className="flex items-center gap-2 text-sm text-muted-foreground"><Link2 className="size-4" />Sin enlaces</p>
                 )}
               </div>
+              )}
 
               {resource.tags.length > 0 && (
                 <div className="space-y-2">
@@ -282,7 +294,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
                 </div>
               )}
 
-              {resource.notes && (
+              {canDownload && resource.notes && (
                 <div className="space-y-2">
                   <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     <StickyNote className="h-3.5 w-3.5" />
@@ -307,6 +319,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
                 )}
               </dl>
 
+              {canEdit && (
               <Button
                 variant="secondary"
                 className="w-full"
@@ -318,6 +331,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
                 <Pencil className="mr-2 h-4 w-4" />
                 Editar recurso
               </Button>
+              )}
             </aside>
           </div>
         </DialogContent>
@@ -328,6 +342,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit }: R
         index={lightboxIndex}
         onIndexChange={setLightboxIndex}
         onClose={() => setLightboxIndex(null)}
+        allowDownload={canDownload}
       />
     </>
   )

@@ -8,6 +8,7 @@ export interface Task { id: string; user_id: string; category_id: string | null;
 export interface Subtask { id: string; task_id: string; title: string; completed: boolean; created_at: string }
 export interface Comment { id: string; task_id: string; user_id: string; content: string; created_at: string; edited_at?: string | null; profile?: Profile }
 export interface AccessCredential { id: string; code: string; kind: 'permanent' | 'temporary'; duration_hours: number | null; note: string | null; created_by: string | null; created_at: string; redeemed_by: string | null; redeemed_at: string | null; revoked_at: string | null }
+export interface WorkspaceMember { user_id: string; role: 'admin' | 'moderator' | 'support'; expires_at: string | null; credential_id: string | null; granted_at: string }
 export interface Attachment { id: string; task_id: string; user_id: string; file_name: string; file_path: string; file_type: string; file_size: number; created_at: string }
 export interface TaskWithRelations extends Task { category: Category | null; subtasks: Subtask[]; comments: (Comment & { profile: Profile })[]; attachments: Attachment[] }
 export type ResourceType = 'script' | 'mlo' | 'vehicle' | 'map' | 'ui' | 'tool' | 'other'

@@ -1,9 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { normalizeRole, type Role } from '@/lib/roles'
 
 export interface AccessStatus {
   /** Tiene acceso vigente al espacio de trabajo. */
   isMember: boolean
   isAdmin: boolean
+  /** Rango vigente (null si no tiene acceso). */
+  role: Role | null
   /** Tuvo un acceso temporal y ya ha caducado. */
   expired: boolean
   /** null = permanente. */
@@ -25,19 +28,21 @@ export async function getAccessStatus(supabase: SupabaseClient, userId: string):
   if (error) {
     // Migración aún sin ejecutar: no se bloquea a todo el mundo fuera de la app.
     if (error.code === 'PGRST205' || error.code === '42P01') {
-      return { isMember: true, isAdmin: false, expired: false, expiresAt: null }
+      return { isMember: true, isAdmin: false, role: 'support', expired: false, expiresAt: null }
     }
-    return { isMember: false, isAdmin: false, expired: false, expiresAt: null }
+    return { isMember: false, isAdmin: false, role: null, expired: false, expiresAt: null }
   }
 
   if (!data) {
-    return { isMember: false, isAdmin: false, expired: false, expiresAt: null }
+    return { isMember: false, isAdmin: false, role: null, expired: false, expiresAt: null }
   }
 
   const expired = !!data.expires_at && new Date(data.expires_at).getTime() <= Date.now()
+  const role = normalizeRole(data.role)
   return {
     isMember: !expired,
-    isAdmin: data.role === 'admin' && !expired,
+    isAdmin: role === 'admin' && !expired,
+    role: expired ? null : role,
     expired,
     expiresAt: data.expires_at,
   }

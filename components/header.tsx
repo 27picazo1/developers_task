@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -12,28 +13,34 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Bookmark, Code2, KeyRound, LogOut, ServerCog, User } from 'lucide-react'
+import { Bookmark, Code2, KeyRound, ListChecks, LogOut, ServerCog, User, Users } from 'lucide-react'
 import { CredentialsDialog } from '@/components/credentials-dialog'
 import type { Profile } from '@/lib/types'
+import { can, roleBadgeClasses, roleLabels, type Role } from '@/lib/roles'
+import { cn } from '@/lib/utils'
 
 interface HeaderProps {
   profile: Profile | null
+  /** Rango del usuario, calculado en el servidor (evita parpadeos y clics perdidos). */
+  role: Role
 }
 
-export function Header({ profile }: HeaderProps) {
+export function Header({ profile, role }: HeaderProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const supabase = useMemo(() => createClient(), [])
-  const [isAdmin, setIsAdmin] = useState(false)
+  const isAdmin = can.manageMembers(role)
   const [credentialsOpen, setCredentialsOpen] = useState(false)
+  const [dialogTab, setDialogTab] = useState<'credenciales' | 'personas'>('credenciales')
 
-  // Solo el administrador ve la opción de generar credenciales.
-  useEffect(() => {
-    let active = true
-    supabase.rpc('is_admin').then(({ data }) => {
-      if (active) setIsAdmin(data === true)
-    })
-    return () => { active = false }
-  }, [supabase])
+  const openDialog = (tab: 'credenciales' | 'personas') => {
+    setDialogTab(tab)
+    setCredentialsOpen(true)
+  }
+
+  // <Link> precarga la página y navega con un solo clic.
+  const navClass = (href: string) =>
+    cn('gap-1.5', pathname.startsWith(href) && 'bg-accent text-accent-foreground')
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -63,10 +70,18 @@ export function Header({ profile }: HeaderProps) {
             </span>
           </div>
           <nav className="ml-4 hidden items-center gap-1 border-l border-border/60 pl-4 sm:flex" aria-label="Navegación principal">
-            <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard')}>Tareas</Button>
-            <Button variant="ghost" size="sm" onClick={() => router.push('/resources')}>
-              <Bookmark data-icon="inline-start" />Recursos
+            <Button asChild variant="ghost" size="sm" className={navClass('/dashboard')}>
+              <Link href="/dashboard" prefetch aria-current={pathname.startsWith('/dashboard') ? 'page' : undefined}>
+                <ListChecks className="h-4 w-4" />Tareas
+              </Link>
             </Button>
+            {can.viewResources(role) && (
+              <Button asChild variant="ghost" size="sm" className={navClass('/resources')}>
+                <Link href="/resources" prefetch aria-current={pathname.startsWith('/resources') ? 'page' : undefined}>
+                  <Bookmark className="h-4 w-4" />Recursos
+                </Link>
+              </Button>
+            )}
           </nav>
         </div>
 
@@ -91,13 +106,9 @@ export function Header({ profile }: HeaderProps) {
                 <span className="flex items-center gap-1.5 text-sm font-medium">
                   {profile?.display_name || 'Usuario'}
                   <span
-                    className={`rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${
-                      isAdmin
-                        ? 'border-violet-500/30 bg-violet-500/10 text-violet-300'
-                        : 'border-sky-500/30 bg-sky-500/10 text-sky-300'
-                    }`}
+                    className={`rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${roleBadgeClasses[role]}`}
                   >
-                    {isAdmin ? 'Admin' : 'Usuario'}
+                    {roleLabels[role]}
                   </span>
                 </span>
                 <span className="text-xs text-muted-foreground">{profile?.email}</span>
@@ -109,7 +120,13 @@ export function Header({ profile }: HeaderProps) {
               Perfil
             </DropdownMenuItem>
             {isAdmin && (
-              <DropdownMenuItem onClick={() => setCredentialsOpen(true)}>
+              <DropdownMenuItem onClick={() => openDialog('personas')}>
+                <Users className="mr-2 h-4 w-4" />
+                Miembros y rangos
+              </DropdownMenuItem>
+            )}
+            {isAdmin && (
+              <DropdownMenuItem onClick={() => openDialog('credenciales')}>
                 <KeyRound className="mr-2 h-4 w-4" />
                 Generar credenciales
               </DropdownMenuItem>
@@ -122,7 +139,7 @@ export function Header({ profile }: HeaderProps) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {isAdmin && <CredentialsDialog open={credentialsOpen} onOpenChange={setCredentialsOpen} />}
+      {isAdmin && <CredentialsDialog open={credentialsOpen} onOpenChange={setCredentialsOpen} initialTab={dialogTab} />}
     </header>
   )
 }
