@@ -20,7 +20,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Bookmark, Download, ExternalLink, FileText, ImagePlus, Link2, Loader2, Maximize2, Paperclip, Pencil, Plus, Search, Trash2, Video, X } from 'lucide-react'
+import { Bookmark, Download, Info, ExternalLink, FileText, ImagePlus, Link2, Loader2, Maximize2, Paperclip, Pencil, Plus, Search, Trash2, Video, X } from 'lucide-react'
 
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
 const MAX_RESOURCE_FILE_SIZE = 700 * 1024 * 1024
@@ -591,7 +591,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
 
   return <div className="min-h-screen bg-background"><Header profile={profile} role={role} /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
     <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="mb-2 flex items-center gap-2 text-primary"><Bookmark className="size-4" /><span className="text-sm font-medium uppercase tracking-wider">Biblioteca privada</span></div><h1 className="text-3xl font-bold tracking-tight">Recursos FiveM</h1><p className="mt-2 text-muted-foreground">{canEdit ? 'Guarda referencias, enlaces y descargas de tus recursos autorizados.' : 'Consulta los recursos y lee su descripción. Las descargas y referencias son solo para administradores.'}</p></div>
+      <div><div className="mb-2 flex items-center gap-2 text-primary"><Bookmark className="size-4" /><span className="text-sm font-medium uppercase tracking-wider">Biblioteca privada</span></div><h1 className="text-3xl font-bold tracking-tight">Recursos FiveM</h1><p className="mt-2 text-muted-foreground">{canEdit ? 'Guarda referencias, enlaces y descargas de tus recursos autorizados.' : 'Consulta los recursos y lee su descripción. Las descargas y referencias son solo para administradores.'}</p><p className="mt-3 inline-flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200"><Info className="size-4 shrink-0" /><strong className="font-semibold">Recordatorio:</strong> en los enlaces de GitHub coloca <code className="rounded bg-background/60 px-1.5 py-0.5 font-mono text-xs">git clone https://github.com/usuario/repositorio</code></p></div>
       {canEdit && (
       <Dialog open={open} onOpenChange={onDialogOpenChange}>
         <DialogTrigger asChild><Button onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button></DialogTrigger>
