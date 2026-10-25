@@ -16,6 +16,42 @@ const s3 = new S3Client({
 
 const publicBaseUrl = process.env.R2_PUBLIC_URL || process.env.NEXT_PUBLIC_R2_PUBLIC_URL
 
+// Las imágenes se sirven a través de nuestro servidor en lugar de redirigir a R2:
+// algunas redes (p. ej. bloqueos de IPs de Cloudflare en España durante partidos)
+// no llegan a *.r2.cloudflarestorage.com y la imagen se queda en "timeout".
+const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }
+const STREAM_MAX_BYTES = 12 * 1024 * 1024
+
+async function streamImage(key: string): Promise<NextResponse | null> {
+  const ext = key.split('.').pop()?.toLowerCase() ?? ''
+  if (!IMAGE_MIME[ext]) return null
+  try {
+    const object = await s3.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }))
+    const body = object.Body
+    if (!body) return null
+    if ((object.ContentLength ?? 0) > STREAM_MAX_BYTES) {
+      // Demasiado grande para pasar por aquí: se cierra y se usa la redirección de siempre.
+      ;(body as { destroy?: () => void }).destroy?.()
+      return null
+    }
+    const storedType = object.ContentType ?? ''
+    const type = storedType.startsWith('image/') && !storedType.startsWith('image/svg') ? storedType : IMAGE_MIME[ext]
+    return new NextResponse(body.transformToWebStream(), {
+      headers: {
+        'Content-Type': type,
+        ...(object.ContentLength ? { 'Content-Length': String(object.ContentLength) } : {}),
+        // Cada archivo tiene una clave única: se puede cachear en el navegador.
+        'Cache-Control': 'private, max-age=86400',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+      },
+    })
+  } catch (error) {
+    console.error('Error sirviendo imagen desde R2, se usa la redirección:', error)
+    return null
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient()
@@ -48,6 +84,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (pathname.startsWith('r2/') && process.env.R2_BUCKET_NAME) {
+      const streamed = await streamImage(pathname)
+      if (streamed) return streamed
+
       if (publicBaseUrl) {
         return NextResponse.redirect(`${publicBaseUrl.replace(/\/$/, '')}/${pathname}`)
       }
