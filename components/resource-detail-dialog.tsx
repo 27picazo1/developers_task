@@ -5,6 +5,7 @@ import type { Resource, ResourceAttachment } from '@/lib/types'
 import { ALLOWED_IMAGE_TYPES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
 import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
+import { ResourceComments } from '@/components/resource-comments'
 import { ImageLightbox, type LightboxImage } from '@/components/image-lightbox'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -257,6 +258,8 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit, can
                   </div>
                 </section>
               )}
+
+              <ResourceComments resourceId={resource.id} />
             </div>
 
             {/* Barra lateral */}

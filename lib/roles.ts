@@ -31,4 +31,8 @@ export const can = {
   editResources: (r?: Role | null) => r === 'admin',
   downloadResources: (r?: Role | null) => r === 'admin',
   openReferences: (r?: Role | null) => r === 'admin',
+  /** Escribir y editar sus propios comentarios en un recurso (moderador incluido). */
+  commentResources: (r?: Role | null) => r === 'admin' || r === 'moderator',
+  /** Borrar comentarios de otras personas. */
+  moderateComments: (r?: Role | null) => r === 'admin',
 }
