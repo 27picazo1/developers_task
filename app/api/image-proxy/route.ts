@@ -5,7 +5,7 @@ import { isAllowedProxyHost } from '@/lib/image-proxy'
 
 const MAX_BYTES = 15 * 1024 * 1024
 const MAX_REDIRECTS = 3
-const USER_AGENT = 'Mozilla/5.0 (compatible; DevTasksImageProxy/1.0)'
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
 // Dominios extra opcionales, separados por comas (p. ej. "i.ibb.co,cdn.discordapp.com").
 const extraHosts = (process.env.IMAGE_PROXY_HOSTS ?? '')
@@ -52,12 +52,16 @@ export async function GET(request: NextRequest) {
     }
 
     if (!upstream || !upstream.ok || !upstream.body) {
-      return NextResponse.json({ error: 'No se pudo obtener la imagen' }, { status: 502 })
+      // Si ves esto abriendo /api/image-proxy?url=... en el navegador, upstreamStatus
+      // dice qué ha respondido imgur al servidor (403/429 = bloquea a Vercel).
+      const upstreamStatus = upstream?.status ?? null
+      console.error('[image-proxy] respuesta de origen no válida', upstreamStatus, target.toString())
+      return NextResponse.json({ error: `El origen respondió ${upstreamStatus ?? 'sin respuesta'}`, upstreamStatus }, { status: 502 })
     }
 
     const type = upstream.headers.get('content-type') ?? ''
     if (!type.startsWith('image/') || type.startsWith('image/svg')) {
-      return NextResponse.json({ error: 'El enlace no es una imagen compatible' }, { status: 415 })
+      return NextResponse.json({ error: 'El enlace no es una imagen compatible', contentType: type }, { status: 415 })
     }
 
     const length = Number(upstream.headers.get('content-length') ?? 0)
@@ -73,7 +77,8 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error('Error en image-proxy:', error)
-    return NextResponse.json({ error: 'No se pudo obtener la imagen' }, { status: 502 })
+    const detail = error instanceof Error ? error.message : String(error)
+    console.error('[image-proxy] fallo al conectar con el origen:', detail)
+    return NextResponse.json({ error: 'No se pudo conectar con el origen de la imagen', detail }, { status: 502 })
   }
 }
