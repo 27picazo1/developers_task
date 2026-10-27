@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
-import type { Attachment, Category, Profile, ResourceStatus, ResourceType, TaskWithRelations } from '@/lib/types'
+import type { Attachment, Category, Profile, ResourceStatus, ResourceType, TaskPriority, TaskWithRelations } from '@/lib/types'
 import { MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
+import { priorityLabels } from '@/lib/priority-config'
 import { buildResourceDraft, resourceImageType, type ResourceDraft } from '@/lib/task-to-resource'
 import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
@@ -174,6 +175,7 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
           description: form.description.trim() || null,
           resource_type: form.resource_type,
           status: form.status,
+          priority: form.priority,
           url: form.url.trim() || null,
           download_url: form.download_url.trim() || null,
           tags: tagList,
@@ -285,7 +287,7 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
               {titleMissing && <p className="text-xs text-destructive">El recurso necesita un título.</p>}
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <FieldLabel>Tipo</FieldLabel>
                 <Select value={form.resource_type} onValueChange={(v) => set('resource_type', v as ResourceType)}>
@@ -303,6 +305,17 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {Object.entries(statusLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel>Prioridad</FieldLabel>
+                <Select value={form.priority} onValueChange={(v) => set('priority', v as TaskPriority)}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(priorityLabels).map(([value, label]) => (
                       <SelectItem key={value} value={value}>{label}</SelectItem>
                     ))}
                   </SelectContent>

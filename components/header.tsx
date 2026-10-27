@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -13,8 +13,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Bell, ChevronDown, Code2, Folder, KeyRound, List, LogOut, User, Users } from 'lucide-react'
+import { Bell, ChevronDown, Code2, Folder, KeyRound, List, LogOut, Plus, User, Users } from 'lucide-react'
 import { CredentialsDialog } from '@/components/credentials-dialog'
+import { QuickResourceDialog } from '@/components/quick-resource-dialog'
 import type { Profile } from '@/lib/types'
 import { can, roleBadgeClasses, roleLabels, type Role } from '@/lib/roles'
 import { cn } from '@/lib/utils'
@@ -32,6 +33,22 @@ export function Header({ profile, role }: HeaderProps) {
   const isAdmin = can.manageMembers(role)
   const [credentialsOpen, setCredentialsOpen] = useState(false)
   const [dialogTab, setDialogTab] = useState<'credenciales' | 'personas'>('credenciales')
+  const canQuickAdd = can.editResources(role)
+  const [quickOpen, setQuickOpen] = useState(false)
+  const [quickText, setQuickText] = useState('')
+
+  // Marcador del navegador: <web>/resources?add=<enlace y título> abre el guardado rápido ya rellenado.
+  useEffect(() => {
+    if (!canQuickAdd) return
+    const params = new URLSearchParams(window.location.search)
+    const add = params.get('add')
+    if (!add) return
+    params.delete('add')
+    const query = params.toString()
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+    setQuickText(add)
+    setQuickOpen(true)
+  }, [canQuickAdd])
 
   const openDialog = (tab: 'credenciales' | 'personas') => {
     setDialogTab(tab)
@@ -88,6 +105,19 @@ export function Header({ profile, role }: HeaderProps) {
         </div>
 
         <div className="flex items-center gap-1">
+          {canQuickAdd && (
+            <Button
+              size="sm"
+              className="mr-2 h-9 gap-1.5 px-3 font-semibold"
+              onClick={() => {
+                setQuickText('')
+                setQuickOpen(true)
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">Recurso</span>
+            </Button>
+          )}
           <Button variant="ghost" size="icon" className="text-foreground/80" aria-label="Notificaciones">
             <Bell className="h-[18px] w-[18px]" />
           </Button>
@@ -149,6 +179,7 @@ export function Header({ profile, role }: HeaderProps) {
         </div>
       </div>
       {isAdmin && <CredentialsDialog open={credentialsOpen} onOpenChange={setCredentialsOpen} initialTab={dialogTab} />}
+      {canQuickAdd && <QuickResourceDialog open={quickOpen} onOpenChange={setQuickOpen} initialText={quickText} />}
     </header>
   )
 }

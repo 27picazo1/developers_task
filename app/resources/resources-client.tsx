@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Profile, Resource, ResourceAttachment, ResourceStatus, ResourceType } from '@/lib/types'
+import type { Profile, Resource, ResourceAttachment, ResourceStatus, ResourceType, TaskPriority } from '@/lib/types'
 import { Header } from '@/components/header'
 import { can, type Role } from '@/lib/roles'
 import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
+import { comparePriority, priorityLabels } from '@/lib/priority-config'
+import { PriorityBadge } from '@/components/priority-badge'
 import { VIDEO_TYPE, fetchYouTubeTitle, parseYouTube, youTubeWatchUrl, type YouTubeRef } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
 import { canLoadImage, imageNameFromUrl, imageTypeFromUrl, normalizeImageUrl } from '@/lib/image-links'
@@ -20,7 +22,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Bookmark, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, ImagePlus, Link2, ListFilter, Loader2, Lock, Paperclip, Pencil, Plus, Search, Trash2, Video, X } from 'lucide-react'
+import { ArrowUpDown, Bookmark, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Flag, ImagePlus, Link2, ListFilter, Loader2, Lock, Paperclip, Pencil, Plus, Search, Trash2, Video, X } from 'lucide-react'
 
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024
 const PAGE_SIZE = 500
@@ -32,9 +34,9 @@ type DraftResourceFile = { file: File; id: string }
 type DraftLink = { id: string; url: string; name: string }
 type DraftVideo = { id: string; ref: YouTubeRef; url: string; title: string }
 type MultipartUpload = { key: string; uploadId: string; partSize: number }
-type ResourceForm = { title: string; description: string; resource_type: ResourceType; status: ResourceStatus; url: string; download_url: string; tags: string; notes: string }
+type ResourceForm = { title: string; description: string; resource_type: ResourceType; status: ResourceStatus; priority: TaskPriority; url: string; download_url: string; tags: string; notes: string }
 
-const emptyForm: ResourceForm = { title: '', description: '', resource_type: 'script', status: 'pending', url: '', download_url: '', tags: '', notes: '' }
+const emptyForm: ResourceForm = { title: '', description: '', resource_type: 'script', status: 'pending', priority: 'medium', url: '', download_url: '', tags: '', notes: '' }
 function GithubIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
@@ -156,8 +158,20 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
   const canDownload = can.downloadResources(role)
   const canOpenReferences = can.openReferences(role)
   const [resources, setResources] = useState(initialResources)
+
+  // El guardado rápido (botón "Recurso" de la cabecera) avisa con este evento para que la lista se actualice sin recargar.
+  useEffect(() => {
+    const onCreated = (event: Event) => {
+      const created = (event as CustomEvent<ResourceWithAttachments>).detail
+      setResources((current) => (current.some((item) => item.id === created.id) ? current : [created, ...current]))
+    }
+    window.addEventListener('resource-created', onCreated)
+    return () => window.removeEventListener('resource-created', onCreated)
+  }, [])
   const [query, setQuery] = useState('')
   const [type, setType] = useState<'all' | ResourceType>('all')
+  const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all')
+  const [sort, setSort] = useState<'recent' | 'priority'>('recent')
   const [page, setPage] = useState(1)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<ResourceWithAttachments | null>(null)
@@ -190,10 +204,18 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
     return () => window.removeEventListener('drop', preventFileNavigation)
   }, [open])
 
-  const filtered = useMemo(() => resources.filter((item) => {
-    const haystack = `${item.title} ${item.description ?? ''} ${item.tags.join(' ')}`.toLowerCase()
-    return (type === 'all' || item.resource_type === type) && haystack.includes(query.toLowerCase())
-  }), [resources, query, type])
+  const filtered = useMemo(() => {
+    const list = resources.filter((item) => {
+      const haystack = `${item.title} ${item.description ?? ''} ${item.tags.join(' ')}`.toLowerCase()
+      return (type === 'all' || item.resource_type === type)
+        && (priorityFilter === 'all' || (item.priority ?? 'medium') === priorityFilter)
+        && haystack.includes(query.toLowerCase())
+    })
+    // "Más recientes" respeta el orden que ya trae la lista; "prioridad" pone antes las altas y, a igualdad, las más nuevas.
+    return sort === 'priority'
+      ? [...list].sort((a, b) => comparePriority(a.priority, b.priority) || Date.parse(b.created_at) - Date.parse(a.created_at))
+      : list
+  }, [resources, query, type, priorityFilter, sort])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, pageCount)
@@ -229,6 +251,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
       description: resource.description ?? '',
       resource_type: resource.resource_type,
       status: resource.status ?? 'pending',
+      priority: resource.priority ?? 'medium',
       url: resource.url ?? '',
       download_url: resource.download_url ?? '',
       tags: resource.tags.join(', '),
@@ -383,6 +406,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
         description: form.description.trim() || null,
         resource_type: form.resource_type,
         status: form.status,
+        priority: form.priority,
         url: form.url.trim() || null,
         download_url: form.download_url.trim() || null,
         tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
@@ -614,9 +638,10 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
           <form onSubmit={saveResource}>
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-2"><Label htmlFor="resource-title">Título</Label><Input id="resource-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ej. Inventario avanzado" required /></div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <div className="flex flex-col gap-2"><Label>Tipo</Label><Select value={form.resource_type} onValueChange={(value) => setForm({ ...form, resource_type: value as ResourceType })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
                 <div className="flex flex-col gap-2"><Label>Estado</Label><Select value={form.status} onValueChange={(value) => setForm({ ...form, status: value as ResourceStatus })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(statusLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+                <div className="flex flex-col gap-2"><Label>Prioridad</Label><Select value={form.priority} onValueChange={(value) => setForm({ ...form, priority: value as TaskPriority })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(priorityLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
               </div>
               <div className="flex flex-col gap-2"><Label>Etiquetas</Label><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="qbcore, ui" /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-description">Descripción</Label><Textarea id="resource-description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Qué contiene y para qué sirve..." /></div>
@@ -739,7 +764,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
       </Dialog>
       )}
     </div>
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 size-[18px] -translate-y-1/2 text-foreground/80" /><Input className="h-11 border-border/60 bg-card/60 pl-12" value={query} onChange={(e) => { setQuery(e.target.value); setPage(1) }} placeholder="Buscar recursos, etiquetas..." /></div><Select value={type} onValueChange={(value) => { setType(value as typeof type); setPage(1) }}><SelectTrigger className="h-11 w-full border-border/60 bg-card/60 data-[size=default]:h-11 sm:w-52"><span className="flex items-center gap-2.5"><ListFilter className="size-4" /><SelectValue /></span></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+    <div className="mb-6 flex flex-col gap-3 lg:flex-row"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 size-[18px] -translate-y-1/2 text-foreground/80" /><Input className="h-11 border-border/60 bg-card/60 pl-12" value={query} onChange={(e) => { setQuery(e.target.value); setPage(1) }} placeholder="Buscar recursos, etiquetas..." /></div><div className="flex flex-wrap gap-3"><Select value={type} onValueChange={(value) => { setType(value as typeof type); setPage(1) }}><SelectTrigger className="h-11 w-full border-border/60 bg-card/60 data-[size=default]:h-11 sm:w-52"><span className="flex items-center gap-2.5"><ListFilter className="size-4" /><SelectValue /></span></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem>{Object.entries(typeLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Select value={priorityFilter} onValueChange={(value) => { setPriorityFilter(value as typeof priorityFilter); setPage(1) }}><SelectTrigger className="h-11 w-full border-border/60 bg-card/60 data-[size=default]:h-11 sm:w-56"><span className="flex items-center gap-2.5"><Flag className="size-4" /><SelectValue /></span></SelectTrigger><SelectContent><SelectItem value="all">Todas las prioridades</SelectItem>{Object.entries(priorityLabels).reverse().map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Select value={sort} onValueChange={(value) => { setSort(value as typeof sort); setPage(1) }}><SelectTrigger className="h-11 w-full border-border/60 bg-card/60 data-[size=default]:h-11 sm:w-48"><span className="flex items-center gap-2.5"><ArrowUpDown className="size-4" /><SelectValue /></span></SelectTrigger><SelectContent><SelectItem value="recent">Más recientes</SelectItem><SelectItem value="priority">Mayor prioridad</SelectItem></SelectContent></Select></div></div>
     {filtered.length ? <><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visible.map((item) => {
       const attachments = (item.resource_attachments ?? []).slice().sort((a, b) => a.position - b.position)
       const imageAttachments = attachments.filter((attachment) => ALLOWED_IMAGE_TYPES.includes(attachment.file_type))
@@ -753,7 +778,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
         {banner && <div className="relative m-1.5 mb-0 overflow-hidden rounded-lg"><button type="button" className="block w-full overflow-hidden" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="aspect-[3.6/1] w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></button><span className="pointer-events-none absolute right-2.5 top-2.5 rounded-md border border-white/10 bg-black/60 px-2 py-0.5 text-xs text-white">1/{galleryImages.length}</span></div>}
         <CardHeader className="gap-0 px-4 pb-0 pt-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge></div>
+            <div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge><PriorityBadge priority={item.priority} /></div>
             <div className="flex shrink-0 items-center"><Button variant="ghost" size="icon" className="size-8" onClick={() => setDetail(item)} aria-label={`Ver ${item.title} en grande`}><ExternalLink className="size-4 text-muted-foreground" /></Button>{canEdit && item.user_id === profile?.id && <><Button variant="ghost" size="icon" className="size-8" onClick={() => openEditResource(item)} aria-label={`Editar ${item.title}`}><Pencil className="size-4 text-muted-foreground" /></Button><Button variant="ghost" size="icon" className="size-8" onClick={() => void removeResource(item)} aria-label={`Eliminar ${item.title}`}><Trash2 className="size-4 text-muted-foreground" /></Button></>}</div>
           </div>
           <CardTitle className="mt-1 text-lg"><button type="button" className="text-left hover:underline" onClick={() => setDetail(item)}>{item.title}</button></CardTitle>

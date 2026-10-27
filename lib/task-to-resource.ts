@@ -1,9 +1,10 @@
-import type { Category, Profile, ResourceStatus, ResourceType, TaskStatus, TaskType } from '@/lib/types'
+import type { Category, Profile, ResourceStatus, ResourceType, TaskPriority, TaskStatus, TaskType } from '@/lib/types'
 
 export interface TaskForResource {
   title: string
   description: string | null
   status: TaskStatus
+  priority?: TaskPriority | null
   type?: TaskType | null
   created_at: string
   user_id: string
@@ -16,6 +17,7 @@ export interface ResourceDraft {
   description: string
   resource_type: ResourceType
   status: ResourceStatus
+  priority: TaskPriority
   url: string
   download_url: string
   tags: string
@@ -97,6 +99,7 @@ export function buildResourceDraft(task: TaskForResource, category: Category | n
     description: finalDescription,
     resource_type: suggestResourceType(`${task.title} ${description} ${category?.name ?? ''}`),
     status: mapStatus(task.status),
+    priority: task.priority ?? 'medium',
     url: referenceLink,
     download_url: downloadLink,
     tags: tags.join(', '),

@@ -2,13 +2,14 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Profile, Category, TaskWithRelations, TaskStatus, TaskType } from '@/lib/types'
+import type { Profile, Category, TaskWithRelations, TaskStatus, TaskType, TaskPriority } from '@/lib/types'
 import { Header } from '@/components/header'
 import type { Role } from '@/lib/roles'
 import { TaskCard, authorName } from '@/components/task-card'
 import { TaskDialog } from '@/components/task-dialog'
 import { TaskDetail } from '@/components/task-detail'
 import { CategoryDialog } from '@/components/category-dialog'
+import { comparePriority, priorityLabels } from '@/lib/priority-config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -38,6 +39,7 @@ interface DashboardClientProps {
 }
 
 type FilterType = 'all' | TaskType
+type FilterPriority = 'all' | TaskPriority
 
 export function DashboardClient({ profile, role, initialCategories, initialTasks, initialProfiles }: DashboardClientProps) {
   const [categories, setCategories] = useState(initialCategories)
@@ -47,6 +49,7 @@ export function DashboardClient({ profile, role, initialCategories, initialTasks
   const [filterType, setFilterType] = useState<FilterType>('all')
   const [filterCategory, setFilterCategory] = useState<string | null>(null)
   const [filterAuthor, setFilterAuthor] = useState<string>('all')
+  const [filterPriority, setFilterPriority] = useState<FilterPriority>('all')
 
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [newTaskType, setNewTaskType] = useState<TaskType>('task')
@@ -149,7 +152,8 @@ export function DashboardClient({ profile, role, initialCategories, initialTasks
     const matchesType = filterType === 'all' || (task.type ?? 'task') === filterType
     const matchesCategory = !filterCategory || task.category_id === filterCategory
     const matchesAuthor = filterAuthor === 'all' || task.user_id === filterAuthor
-    return matchesSearch && matchesType && matchesCategory && matchesAuthor
+    const matchesPriority = filterPriority === 'all' || task.priority === filterPriority
+    return matchesSearch && matchesType && matchesCategory && matchesAuthor && matchesPriority
   })
 
   const typeCounts = typeOrder.reduce(
@@ -158,12 +162,13 @@ export function DashboardClient({ profile, role, initialCategories, initialTasks
   )
 
   const authors = profiles.filter((p) => tasks.some((t) => t.user_id === p.id))
-  const hasActiveFilters = filterType !== 'all' || filterCategory !== null || filterAuthor !== 'all' || search !== ''
+  const hasActiveFilters = filterType !== 'all' || filterCategory !== null || filterAuthor !== 'all' || filterPriority !== 'all' || search !== ''
 
   const clearFilters = () => {
     setFilterType('all')
     setFilterCategory(null)
     setFilterAuthor('all')
+    setFilterPriority('all')
     setSearch('')
   }
 
@@ -259,6 +264,19 @@ export function DashboardClient({ profile, role, initialCategories, initialTasks
                 ))}
               </SelectContent>
             </Select>
+            <Select value={filterPriority} onValueChange={(value) => setFilterPriority(value as FilterPriority)}>
+              <SelectTrigger className="w-[190px]">
+                <SelectValue placeholder="Todas las prioridades" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas las prioridades</SelectItem>
+                {(['high', 'medium', 'low'] as TaskPriority[]).map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {priorityLabels[p]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {hasActiveFilters && (
               <Button variant="ghost" size="sm" onClick={clearFilters}>
                 <X className="mr-1 h-4 w-4" />
@@ -334,7 +352,10 @@ export function DashboardClient({ profile, role, initialCategories, initialTasks
         {/* Tablero Kanban */}
         <div className="grid items-start gap-4 lg:grid-cols-3">
           {columns.map((col) => {
-            const colTasks = filteredTasks.filter((t) => t.status === col.status)
+            // Dentro de cada columna: primero las de prioridad alta y, a igualdad, las más recientes.
+            const colTasks = filteredTasks
+              .filter((t) => t.status === col.status)
+              .sort((a, b) => comparePriority(a.priority, b.priority) || Date.parse(b.created_at) - Date.parse(a.created_at))
             const ColIcon = col.icon
             const isOver = overColumn === col.status && draggingId !== null
             return (

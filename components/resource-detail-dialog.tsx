@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { Resource, ResourceAttachment } from '@/lib/types'
 import { ALLOWED_IMAGE_TYPES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
+import { PriorityBadge } from '@/components/priority-badge'
 import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
 import { ResourceComments } from '@/components/resource-comments'
@@ -145,6 +146,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit, can
               <div className="flex flex-wrap items-center gap-2">
                 <Badge className={`${typeColors[resource.resource_type]} backdrop-blur`}>{typeLabels[resource.resource_type]}</Badge>
                 <Badge className={`${statusColors[resource.status ?? 'pending']} backdrop-blur`}>{statusLabels[resource.status ?? 'pending']}</Badge>
+                <PriorityBadge priority={resource.priority} className="backdrop-blur" />
               </div>
               <DialogTitle className="text-2xl font-bold leading-tight tracking-tight text-pretty sm:text-3xl">{resource.title}</DialogTitle>
             </div>
