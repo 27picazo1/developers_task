@@ -7,6 +7,8 @@ import { createClient } from '@/lib/supabase/client'
 import type { Attachment, Category, Profile, ResourceStatus, ResourceType, TaskPriority, TaskWithRelations } from '@/lib/types'
 import { MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
 import { priorityLabels } from '@/lib/priority-config'
+import { joinDownloadLinks } from '@/lib/download-links'
+import { DownloadLinks } from '@/components/download-links'
 import { buildResourceDraft, resourceImageType, type ResourceDraft } from '@/lib/task-to-resource'
 import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
@@ -177,7 +179,7 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
           status: form.status,
           priority: form.priority,
           url: form.url.trim() || null,
-          download_url: form.download_url.trim() || null,
+          download_url: joinDownloadLinks(form.download_url),
           tags: tagList,
           notes: form.notes.trim() || null,
         })
@@ -346,8 +348,8 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
                 <Input id="move-url" type="url" value={form.url} onChange={(e) => set('url', e.target.value)} placeholder="https://..." />
               </div>
               <div className="space-y-1.5">
-                <FieldLabel htmlFor="move-download">Enlace de descarga</FieldLabel>
-                <Input id="move-download" type="url" value={form.download_url} onChange={(e) => set('download_url', e.target.value)} placeholder="https://..." />
+                <FieldLabel htmlFor="move-download">Enlaces de descarga <span className="font-normal text-muted-foreground">(uno por línea)</span></FieldLabel>
+                <Textarea id="move-download" rows={2} value={form.download_url} onChange={(e) => set('download_url', e.target.value)} placeholder={'https://...\nhttps://...'} />
               </div>
             </div>
 
@@ -384,7 +386,7 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
                             className={`relative overflow-hidden rounded-lg border ${isBanner ? 'border-primary ring-1 ring-primary' : 'border-border'} ${included ? '' : 'opacity-40'}`}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={mediaUrl(item.attachment.file_path)} alt={item.attachment.file_name} className="aspect-[4/3] w-full object-cover" />
+                            <img src={mediaUrl(item.attachment.file_path)} alt={item.attachment.file_name} className="aspect-video w-full object-cover" />
                             <label className="absolute left-1.5 top-1.5 flex cursor-pointer items-center rounded bg-background/80 p-1 backdrop-blur">
                               <Checkbox
                                 checked={included}
@@ -479,7 +481,7 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
             <Card className="group overflow-hidden border-border/60 bg-card/70">
               {banner && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={mediaUrl(banner.attachment.file_path)} alt={`Portada: ${form.title}`} className="aspect-[16/8] w-full object-cover" />
+                <img src={mediaUrl(banner.attachment.file_path)} alt={`Portada: ${form.title}`} className="aspect-video w-full object-cover" />
               )}
               <CardHeader className="pb-3">
                 <div className="flex flex-wrap gap-1.5">
@@ -535,11 +537,7 @@ export function MoveToResourceDialog({ task, open, onOpenChange, category, profi
                       <a href={form.url.trim()} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a>
                     </Button>
                   )}
-                  {form.download_url.trim() && (
-                    <Button asChild size="sm">
-                      <a href={form.download_url.trim()} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a>
-                    </Button>
-                  )}
+                  <DownloadLinks value={form.download_url} />
                   {!form.url.trim() && !form.download_url.trim() && (
                     <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>
                   )}

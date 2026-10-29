@@ -70,8 +70,10 @@ function formatDate(date: string) {
 export function buildResourceDraft(task: TaskForResource, category: Category | null | undefined, profiles: Profile[]): ResourceDraft {
   const description = (task.description ?? '').trim()
   const links = extractLinks(description).filter((link) => !isYouTubeHost(link))
-  const downloadLink = links.find((link) => DOWNLOAD_HINT.test(link)) ?? ''
-  const referenceLink = links.find((link) => link !== downloadLink) ?? ''
+  // Varios enlaces de descarga caben en el mismo campo (uno por línea).
+  const downloadLinks = links.filter((link) => DOWNLOAD_HINT.test(link))
+  const downloadLink = downloadLinks.join('\n')
+  const referenceLink = links.find((link) => !downloadLinks.includes(link)) ?? ''
 
   // Si la descripción es solo un enlace, ya queda en «Enlace de referencia»: no se repite.
   const onlyLink = links.length === 1 && description === links[0]

@@ -1,6 +1,6 @@
-diff -ruN pw8/b/app/api/upload-imgur/route.ts pw10/b/app/api/upload-imgur/route.ts
---- pw8/b/app/api/upload-imgur/route.ts	2026-10-27 22:04:44.925157381 +0000
-+++ pw10/b/app/api/upload-imgur/route.ts	2026-10-29 10:16:36.009509707 +0000
+diff -ruN a/app/api/upload-imgur/route.ts b/app/api/upload-imgur/route.ts
+--- a/app/api/upload-imgur/route.ts	2026-10-29 16:25:00.997527293 +0000
++++ b/app/api/upload-imgur/route.ts	2026-10-29 16:25:01.012949544 +0000
 @@ -1,6 +1,31 @@
  import { type NextRequest, NextResponse } from 'next/server'
  import { createClient } from '@/lib/supabase/server'
@@ -33,9 +33,9 @@ diff -ruN pw8/b/app/api/upload-imgur/route.ts pw10/b/app/api/upload-imgur/route.
  
  export async function POST(request: NextRequest) {
    try {
-diff -ruN pw8/b/app/resources/resources-client.tsx pw10/b/app/resources/resources-client.tsx
---- pw8/b/app/resources/resources-client.tsx	2026-10-27 22:04:44.925295766 +0000
-+++ pw10/b/app/resources/resources-client.tsx	2026-10-29 10:16:36.011191155 +0000
+diff -ruN a/app/resources/resources-client.tsx b/app/resources/resources-client.tsx
+--- a/app/resources/resources-client.tsx	2026-10-29 16:25:00.998858141 +0000
++++ b/app/resources/resources-client.tsx	2026-10-29 16:25:01.014329724 +0000
 @@ -8,6 +8,9 @@
  import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
  import { comparePriority, priorityLabels } from '@/lib/priority-config'
@@ -213,9 +213,9 @@ diff -ruN pw8/b/app/resources/resources-client.tsx pw10/b/app/resources/resource
          </CardContent>
        </Card>
      })}</div>
-diff -ruN pw8/b/components/download-links.tsx pw10/b/components/download-links.tsx
---- pw8/b/components/download-links.tsx	1970-01-01 00:00:00.000000000 +0000
-+++ pw10/b/components/download-links.tsx	2026-10-29 10:16:13.210055774 +0000
+diff -ruN a/components/download-links.tsx b/components/download-links.tsx
+--- a/components/download-links.tsx	1970-01-01 00:00:00.000000000 +0000
++++ b/components/download-links.tsx	2026-10-29 16:25:01.009771893 +0000
 @@ -0,0 +1,74 @@
 +'use client'
 +
@@ -291,9 +291,9 @@ diff -ruN pw8/b/components/download-links.tsx pw10/b/components/download-links.t
 +    </DropdownMenu>
 +  )
 +}
-diff -ruN pw8/b/components/move-to-resource-dialog.tsx pw10/b/components/move-to-resource-dialog.tsx
---- pw8/b/components/move-to-resource-dialog.tsx	2026-10-27 22:04:44.924394439 +0000
-+++ pw10/b/components/move-to-resource-dialog.tsx	2026-10-29 10:16:13.209870861 +0000
+diff -ruN a/components/move-to-resource-dialog.tsx b/components/move-to-resource-dialog.tsx
+--- a/components/move-to-resource-dialog.tsx	2026-10-29 16:25:00.993513069 +0000
++++ b/components/move-to-resource-dialog.tsx	2026-10-29 16:25:01.008801549 +0000
 @@ -7,6 +7,8 @@
  import type { Attachment, Category, Profile, ResourceStatus, ResourceType, TaskPriority, TaskWithRelations } from '@/lib/types'
  import { MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
@@ -354,9 +354,9 @@ diff -ruN pw8/b/components/move-to-resource-dialog.tsx pw10/b/components/move-to
                    {!form.url.trim() && !form.download_url.trim() && (
                      <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>
                    )}
-diff -ruN pw8/b/components/quick-resource-dialog.tsx pw10/b/components/quick-resource-dialog.tsx
---- pw8/b/components/quick-resource-dialog.tsx	2026-10-27 22:04:44.924561526 +0000
-+++ pw10/b/components/quick-resource-dialog.tsx	2026-10-29 10:18:17.779814642 +0000
+diff -ruN a/components/quick-resource-dialog.tsx b/components/quick-resource-dialog.tsx
+--- a/components/quick-resource-dialog.tsx	2026-10-29 16:25:00.994361894 +0000
++++ b/components/quick-resource-dialog.tsx	2026-10-29 16:25:01.009708273 +0000
 @@ -1,14 +1,16 @@
  'use client'
  
@@ -761,9 +761,9 @@ diff -ruN pw8/b/components/quick-resource-dialog.tsx pw10/b/components/quick-res
                {saving && <Loader2 className="size-4 animate-spin" />}
                Guardar
              </Button>
-diff -ruN pw8/b/components/resource-detail-dialog.tsx pw10/b/components/resource-detail-dialog.tsx
---- pw8/b/components/resource-detail-dialog.tsx	2026-10-27 22:04:44.924527474 +0000
-+++ pw10/b/components/resource-detail-dialog.tsx	2026-10-29 10:16:13.210001780 +0000
+diff -ruN a/components/resource-detail-dialog.tsx b/components/resource-detail-dialog.tsx
+--- a/components/resource-detail-dialog.tsx	2026-10-29 16:25:00.994183512 +0000
++++ b/components/resource-detail-dialog.tsx	2026-10-29 16:25:01.009434138 +0000
 @@ -4,6 +4,7 @@
  import type { Resource, ResourceAttachment } from '@/lib/types'
  import { ALLOWED_IMAGE_TYPES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
@@ -785,9 +785,9 @@ diff -ruN pw8/b/components/resource-detail-dialog.tsx pw10/b/components/resource
                    </div>
                  ) : (
                    <p className="flex items-center gap-2 text-sm text-muted-foreground"><Link2 className="size-4" />Sin enlaces</p>
-diff -ruN pw8/b/lib/download-links.ts pw10/b/lib/download-links.ts
---- pw8/b/lib/download-links.ts	1970-01-01 00:00:00.000000000 +0000
-+++ pw10/b/lib/download-links.ts	2026-10-29 10:16:13.213697356 +0000
+diff -ruN a/lib/download-links.ts b/lib/download-links.ts
+--- a/lib/download-links.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/lib/download-links.ts	2026-10-29 16:25:01.018249455 +0000
 @@ -0,0 +1,28 @@
 +/**
 + * Varios enlaces de descarga en un mismo recurso.
@@ -817,9 +817,9 @@ diff -ruN pw8/b/lib/download-links.ts pw10/b/lib/download-links.ts
 +    return url
 +  }
 +}
-diff -ruN pw8/b/lib/imgur-upload.ts pw10/b/lib/imgur-upload.ts
---- pw8/b/lib/imgur-upload.ts	1970-01-01 00:00:00.000000000 +0000
-+++ pw10/b/lib/imgur-upload.ts	2026-10-29 10:17:44.851973556 +0000
+diff -ruN a/lib/imgur-upload.ts b/lib/imgur-upload.ts
+--- a/lib/imgur-upload.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/lib/imgur-upload.ts	2026-10-29 16:25:01.018346475 +0000
 @@ -0,0 +1,49 @@
 +/**
 + * Subida de imágenes a Imgur directamente desde el navegador.
@@ -870,9 +870,9 @@ diff -ruN pw8/b/lib/imgur-upload.ts pw10/b/lib/imgur-upload.ts
 +  if (!response.ok || !data?.success || !data.data?.link) throw new Error(imgurErrorMessage(data, response.status))
 +  return { url: data.data.link.replace(/^http:/, 'https:'), deleteHash: data.data.deletehash }
 +}
-diff -ruN pw8/b/lib/quick-resource.ts pw10/b/lib/quick-resource.ts
---- pw8/b/lib/quick-resource.ts	2026-10-27 22:04:44.925831437 +0000
-+++ pw10/b/lib/quick-resource.ts	2026-10-29 10:16:36.009770165 +0000
+diff -ruN a/lib/quick-resource.ts b/lib/quick-resource.ts
+--- a/lib/quick-resource.ts	2026-10-29 16:25:01.001357391 +0000
++++ b/lib/quick-resource.ts	2026-10-29 16:25:01.018105640 +0000
 @@ -8,6 +8,7 @@
    title: string
    /** Enlace de referencia (página del recurso, repositorio…). */
@@ -938,9 +938,9 @@ diff -ruN pw8/b/lib/quick-resource.ts pw10/b/lib/quick-resource.ts
 +  }
 +  return merged
 +}
-diff -ruN pw8/b/lib/task-to-resource.ts pw10/b/lib/task-to-resource.ts
---- pw8/b/lib/task-to-resource.ts	2026-10-27 22:04:44.925547739 +0000
-+++ pw10/b/lib/task-to-resource.ts	2026-10-29 10:16:13.213539500 +0000
+diff -ruN a/lib/task-to-resource.ts b/lib/task-to-resource.ts
+--- a/lib/task-to-resource.ts	2026-10-29 16:25:01.000707179 +0000
++++ b/lib/task-to-resource.ts	2026-10-29 16:25:01.017061436 +0000
 @@ -70,8 +70,10 @@
  export function buildResourceDraft(task: TaskForResource, category: Category | null | undefined, profiles: Profile[]): ResourceDraft {
    const description = (task.description ?? '').trim()

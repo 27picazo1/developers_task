@@ -8,6 +8,7 @@ export interface QuickDraft {
   title: string
   /** Enlace de referencia (página del recurso, repositorio…). */
   url: string
+  /** Enlaces de descarga, uno por línea (puede haber varios). */
   downloadUrl: string
   description: string
   resourceType: ResourceType
@@ -60,7 +61,7 @@ export function titleFromUrl(link: string): string {
  */
 export function parseQuickPaste(text: string): QuickDraft {
   let url = ''
-  let downloadUrl = ''
+  const downloads: string[] = []
   const images: QuickDraft['images'] = []
   const videos: QuickDraft['videos'] = []
   const extraLinks: string[] = []
@@ -78,8 +79,8 @@ export function parseQuickPaste(text: string): QuickDraft {
       }
       continue
     }
-    if (!downloadUrl && DOWNLOAD_HINT.test(link)) {
-      downloadUrl = link
+    if (DOWNLOAD_HINT.test(link)) {
+      if (!downloads.includes(link)) downloads.push(link)
       continue
     }
     if (!url) {
@@ -89,17 +90,35 @@ export function parseQuickPaste(text: string): QuickDraft {
     extraLinks.push(link)
   }
 
+  const downloadUrl = downloads.join('\n')
+
   const lines = text
     .replace(LINK_RE, ' ')
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
 
-  const title = (lines[0] ?? titleFromUrl(url || downloadUrl || videos[0]?.url || '')).slice(0, 120)
+  const title = (lines[0] ?? titleFromUrl(url || downloads[0] || videos[0]?.url || '')).slice(0, 120)
   const description = [...lines.slice(1), ...extraLinks].join('\n').slice(0, 2000)
 
   let resourceType = suggestResourceType([title, description, url, downloadUrl].join(' '))
   if (resourceType === 'other' && /github\.com/i.test(url + downloadUrl)) resourceType = 'script'
 
   return { title, url, downloadUrl, description, resourceType, images, videos }
+}
+
+/**
+ * Une las imágenes/vídeos añadidos a mano (arrastrados, enlaces) con los detectados en el texto pegado:
+ * los de a mano van primero (el primero será la portada), sin repetidos y sin los que se hayan quitado.
+ */
+export function mergeMedia<T>(manual: T[], detected: T[], key: (item: T) => string, removed: string[]): T[] {
+  const seen = new Set<string>()
+  const merged: T[] = []
+  for (const item of [...manual, ...detected]) {
+    const id = key(item)
+    if (seen.has(id) || removed.includes(id)) continue
+    seen.add(id)
+    merged.push(item)
+  }
+  return merged
 }

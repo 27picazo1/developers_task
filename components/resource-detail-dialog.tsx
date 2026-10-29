@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { Resource, ResourceAttachment } from '@/lib/types'
 import { ALLOWED_IMAGE_TYPES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
 import { PriorityBadge } from '@/components/priority-badge'
+import { DownloadLinks } from '@/components/download-links'
 import { VIDEO_TYPE, parseYouTube } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
 import { ResourceComments } from '@/components/resource-comments'
@@ -276,11 +277,7 @@ export function ResourceDetailDialog({ resource, open, onOpenChange, onEdit, can
                         <a href={resource.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a>
                       </Button>
                     )}
-                    {resource.download_url && (
-                      <Button asChild className="justify-start">
-                        <a href={resource.download_url} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a>
-                      </Button>
-                    )}
+                    <DownloadLinks value={resource.download_url} layout="stack" />
                   </div>
                 ) : (
                   <p className="flex items-center gap-2 text-sm text-muted-foreground"><Link2 className="size-4" />Sin enlaces</p>

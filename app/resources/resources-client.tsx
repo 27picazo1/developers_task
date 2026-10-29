@@ -8,6 +8,9 @@ import { can, type Role } from '@/lib/roles'
 import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, statusColors, statusLabels, typeColors, typeLabels } from '@/lib/resource-config'
 import { comparePriority, priorityLabels } from '@/lib/priority-config'
 import { PriorityBadge } from '@/components/priority-badge'
+import { DownloadLinks } from '@/components/download-links'
+import { uploadImageToImgur } from '@/lib/imgur-upload'
+import { joinDownloadLinks, parseDownloadLinks } from '@/lib/download-links'
 import { VIDEO_TYPE, fetchYouTubeTitle, parseYouTube, youTubeWatchUrl, type YouTubeRef } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
 import { canLoadImage, imageNameFromUrl, imageTypeFromUrl, normalizeImageUrl } from '@/lib/image-links'
@@ -191,6 +194,9 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
   const [uploadProgress, setUploadProgress] = useState('')
   const [uploadError, setUploadError] = useState('')
   const [draggingImages, setDraggingImages] = useState(false)
+  // Imágenes que se están subiendo a Imgur ahora mismo (se bloquea Guardar hasta que acaben).
+  const [imgurUploading, setImgurUploading] = useState(0)
+  const editorSession = useRef(0)
   const previewUrls = useRef<string[]>([])
 
   useEffect(() => () => previewUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
@@ -264,7 +270,10 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
 
   const onDialogOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && saving) return
-    if (!nextOpen) resetEditor()
+    if (!nextOpen) {
+      editorSession.current += 1 // las subidas en curso de este formulario ya no se añadirán
+      resetEditor()
+    }
     setOpen(nextOpen)
   }
 
@@ -294,8 +303,49 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
       previewUrls.current.push(previewUrl)
       valid.push({ file, previewUrl, id: `new:${crypto.randomUUID()}` })
     }
-    setDraftImages((current) => [...current, ...valid])
-    if (valid.length) setBannerId((current) => current || valid[0].id)
+    if (!valid.length) return
+
+    // Al soltarlas se suben a Imgur y solo se guarda el enlace (igual que las imágenes por enlace).
+    // Si Imgur no está disponible, se quedan como antes: se suben a tu almacenamiento al guardar.
+    const session = editorSession.current
+    setImgurUploading((count) => count + valid.length)
+    const results = await Promise.all(valid.map(async (image) => {
+      try {
+        return { image, uploaded: await uploadImageToImgur(image.file), error: '' }
+      } catch (error) {
+        return { image, uploaded: null, error: error instanceof Error ? error.message : 'Error desconocido' }
+      }
+    }))
+    setImgurUploading((count) => count - valid.length)
+
+    const forget = (image: DraftImage) => {
+      URL.revokeObjectURL(image.previewUrl)
+      previewUrls.current = previewUrls.current.filter((url) => url !== image.previewUrl)
+    }
+    if (session !== editorSession.current) {
+      results.forEach(({ image }) => forget(image)) // se cerró el formulario mientras subían
+      return
+    }
+
+    const links: DraftLink[] = []
+    const fallback: DraftImage[] = []
+    let firstError = ''
+    for (const { image, uploaded, error } of results) {
+      if (uploaded) {
+        forget(image)
+        links.push({ id: `new:link:${crypto.randomUUID()}`, url: uploaded.url, name: image.file.name })
+      } else {
+        fallback.push(image)
+        if (!firstError) firstError = error
+      }
+    }
+    if (links.length) setDraftLinks((current) => [...current, ...links])
+    if (fallback.length) {
+      setDraftImages((current) => [...current, ...fallback])
+      toast.warning(`No se pudo subir a Imgur (${firstError}). Se subirá a tu almacenamiento al guardar.`)
+    }
+    const first = links[0]?.id ?? fallback[0]?.id
+    if (first) setBannerId((current) => current || first)
   }
 
   const removeDraftImage = (image: DraftImage) => {
@@ -400,6 +450,9 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Tu sesión no está disponible. Vuelve a iniciar sesión.')
+      if (form.download_url.trim() && parseDownloadLinks(form.download_url).length === 0) {
+        throw new Error('Los enlaces de descarga tienen que empezar por http:// o https:// (uno por línea).')
+      }
 
       const payload = {
         title: form.title.trim(),
@@ -408,7 +461,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
         status: form.status,
         priority: form.priority,
         url: form.url.trim() || null,
-        download_url: form.download_url.trim() || null,
+        download_url: joinDownloadLinks(form.download_url),
         tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
         notes: form.notes.trim() || null,
         updated_at: new Date().toISOString(),
@@ -646,10 +699,10 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
               <div className="flex flex-col gap-2"><Label>Etiquetas</Label><Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="qbcore, ui" /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-description">Descripción</Label><Textarea id="resource-description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Qué contiene y para qué sirve..." /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-url">Enlace de referencia</Label><Input id="resource-url" type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></div>
-              <div className="flex flex-col gap-2"><Label htmlFor="resource-download">Enlace de descarga</Label><Input id="resource-download" type="url" value={form.download_url} onChange={(e) => setForm({ ...form, download_url: e.target.value })} placeholder="https://..." /></div>
+              <div className="flex flex-col gap-2"><Label htmlFor="resource-download">Enlaces de descarga <span className="font-normal text-muted-foreground">(uno por línea)</span></Label><Textarea id="resource-download" rows={2} value={form.download_url} onChange={(e) => setForm({ ...form, download_url: e.target.value })} placeholder={'https://...\nhttps://...'} /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-notes">Notas privadas</Label><Textarea id="resource-notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Dependencias, versión, instalación..." /></div>
               <section className="flex flex-col gap-2" aria-labelledby="resource-images-title">
-                <div><Label id="resource-images-title">Imágenes</Label><p className="mt-1 text-xs text-muted-foreground">Hasta {MAX_IMAGES} imágenes, 8 MB cada una. JPG, PNG, WebP o GIF.</p></div>
+                <div><Label id="resource-images-title">Imágenes</Label><p className="mt-1 text-xs text-muted-foreground">Hasta {MAX_IMAGES} imágenes, 8 MB cada una. JPG, PNG, WebP o GIF. Al soltarlas se suben a Imgur.</p></div>
                 <label
                   htmlFor="resource-images"
                   className={`flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-4 py-3 text-sm transition-colors focus-within:ring-2 focus-within:ring-ring ${draggingImages ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground hover:border-primary/60 hover:text-foreground'}`}
@@ -680,13 +733,14 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
                   <Input value={linkInput} onChange={(e) => setLinkInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addImageLink() } }} placeholder="…o pega un enlace de imagen (imgur .png, etc.)" aria-label="Enlace de imagen" />
                   <Button type="button" variant="outline" onClick={() => void addImageLink()} disabled={checkingLink || !linkInput.trim()}>{checkingLink ? <Loader2 className="size-4 animate-spin" /> : <Link2 data-icon="inline-start" />}Añadir</Button>
                 </div>
+                {imgurUploading > 0 && <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status"><Loader2 className="size-3.5 animate-spin" />Subiendo {imgurUploading} {imgurUploading === 1 ? 'imagen' : 'imágenes'} a Imgur…</p>}
                 <p className="text-xs text-muted-foreground">Las imágenes por enlace no se suben: solo se guarda la dirección.</p>
                 {(activeImages.length + draftImages.length + draftLinks.length > 0) && <p className="text-xs text-muted-foreground">Selecciona una portada. El resto aparecerá como miniaturas enlazadas.</p>}
                 <div className="grid grid-cols-3 gap-2">
                   {activeImages.map((attachment) => (
                     <div key={attachment.id} className={`relative overflow-hidden rounded-md border ${bannerId === attachment.id ? 'border-primary ring-1 ring-primary' : 'border-border'}`}>
                       <button type="button" className="block w-full text-left" onClick={() => setBannerId(attachment.id)} aria-label={`Usar ${attachment.file_name} como portada`} aria-pressed={bannerId === attachment.id}>
-                        <img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="aspect-[4/3] w-full object-cover" />
+                        <img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="aspect-video w-full object-cover" />
                         <span className="block truncate px-2 py-1 text-[11px]">{bannerId === attachment.id ? 'Portada' : 'Elegir portada'}</span>
                       </button>
                       <Button type="button" variant="secondary" size="icon-sm" className="absolute right-1 top-1 size-7" aria-label={`Quitar ${attachment.file_name}`} onClick={() => removeExistingImage(attachment)}><X className="size-3.5" /></Button>
@@ -695,7 +749,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
                   {draftImages.map((image) => (
                     <div key={image.id} className={`relative overflow-hidden rounded-md border ${bannerId === image.id ? 'border-primary ring-1 ring-primary' : 'border-border'}`}>
                       <button type="button" className="block w-full text-left" onClick={() => setBannerId(image.id)} aria-label={`Usar ${image.file.name} como portada`} aria-pressed={bannerId === image.id}>
-                        <img src={image.previewUrl} alt={image.file.name} className="aspect-[4/3] w-full object-cover" />
+                        <img src={image.previewUrl} alt={image.file.name} className="aspect-video w-full object-cover" />
                         <span className="block truncate px-2 py-1 text-[11px]">{bannerId === image.id ? 'Portada' : 'Elegir portada'}</span>
                       </button>
                       <Button type="button" variant="secondary" size="icon-sm" className="absolute right-1 top-1 size-7" aria-label={`Quitar ${image.file.name}`} onClick={() => removeDraftImage(image)}><X className="size-3.5" /></Button>
@@ -704,7 +758,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
                   {draftLinks.map((link) => (
                     <div key={link.id} className={`relative overflow-hidden rounded-md border ${bannerId === link.id ? 'border-primary ring-1 ring-primary' : 'border-border'}`}>
                       <button type="button" className="block w-full text-left" onClick={() => setBannerId(link.id)} aria-label={`Usar ${link.name} como portada`} aria-pressed={bannerId === link.id}>
-                        <img src={link.url} alt={link.name} referrerPolicy="no-referrer" className="aspect-[4/3] w-full object-cover" />
+                        <img src={link.url} alt={link.name} referrerPolicy="no-referrer" className="aspect-video w-full object-cover" />
                         <span className="flex items-center gap-1 truncate px-2 py-1 text-[11px]"><Link2 className="size-3 shrink-0" />{bannerId === link.id ? 'Portada' : 'Elegir portada'}</span>
                       </button>
                       <Button type="button" variant="secondary" size="icon-sm" className="absolute right-1 top-1 size-7" aria-label={`Quitar ${link.name}`} onClick={() => removeDraftLink(link.id)}><X className="size-3.5" /></Button>
@@ -758,7 +812,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
               {uploadProgress && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">{uploadProgress}</p>}
               {uploadError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{uploadError}</p>}
             </div>
-            <DialogFooter className="mt-5"><Button type="button" variant="outline" onClick={() => onDialogOpenChange(false)} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{saving ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar recurso'}</Button></DialogFooter>
+            <DialogFooter className="mt-5"><Button type="button" variant="outline" onClick={() => onDialogOpenChange(false)} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving || imgurUploading > 0}>{saving && <Loader2 className="size-4 animate-spin" />}{saving ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar recurso'}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -775,7 +829,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
       const thumbnails = imageAttachments.filter((attachment) => attachment.id !== banner?.id)
       const totalFilesSize = files.reduce((sum, attachment) => sum + (attachment.file_size || 0), 0)
       return <Card key={item.id} className="group gap-0 overflow-hidden border-border/60 bg-card/70 py-0 shadow-[0_8px_28px_rgba(0,0,0,0.28)]">
-        {banner && <div className="relative m-1.5 mb-0 overflow-hidden rounded-lg"><button type="button" className="block w-full overflow-hidden" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="aspect-[3.6/1] w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-[1.02]" /></button><span className="pointer-events-none absolute right-2.5 top-2.5 rounded-md border border-white/10 bg-black/60 px-2 py-0.5 text-xs text-white">1/{galleryImages.length}</span></div>}
+        {banner && <div className="m-1.5 mb-0"><div className="relative aspect-video overflow-hidden rounded-xl border border-border/50 bg-muted shadow-sm"><button type="button" className="group absolute inset-0 block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /></button><span className="pointer-events-none absolute right-2.5 top-2.5 rounded-md border border-white/10 bg-black/60 px-2 py-0.5 text-xs text-white">1/{galleryImages.length}</span></div></div>}
         <CardHeader className="gap-0 px-4 pb-0 pt-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge><PriorityBadge priority={item.priority} /></div>
@@ -789,7 +843,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
           {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <button type="button" key={attachment.id} onClick={() => openLightbox(galleryImages, attachment.id)} title={`Ver ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="h-9 w-16 cursor-zoom-in object-cover transition-opacity hover:opacity-80" /></button>)}</div>}
           {files.length > 0 && <div className="flex flex-col gap-1.5">{files.map((attachment) => { const fileLabel = `${attachment.file_name} • ${(attachment.file_size / (1024 * 1024)).toFixed(1)} MB`; return canDownload && attachment.file_path ? <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{fileLabel}</span></a> : <div key={attachment.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><FileText className="size-4 shrink-0" /><span className="truncate">{fileLabel}</span></div> })}</div>}
           <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="rounded-lg bg-white/[0.03] px-3 text-xs font-normal text-foreground/80">#{tag}</Badge>)}</div>
-          {canOpenReferences && <div className="-mx-4 mt-auto flex items-center gap-2 border-t border-border/60 px-4 pt-3">{item.url && <Button asChild variant="outline" size="sm" className="px-4 font-semibold"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}{item.download_url && <Button asChild size="sm" className="px-4 font-semibold shadow-[0_0_14px_rgba(52,211,153,0.28)]"><a href={item.download_url} target="_blank" rel="noreferrer"><Download data-icon="inline-start" />Descarga</a></Button>}{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}{files.length > 0 && <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"><Download className="size-3.5" />{(totalFilesSize / (1024 * 1024)).toFixed(1)} MB</span>}</div>}
+          {canOpenReferences && <div className="-mx-4 mt-auto flex items-center gap-2 border-t border-border/60 px-4 pt-3">{item.url && <Button asChild variant="outline" size="sm" className="px-4 font-semibold"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}<DownloadLinks value={item.download_url} className="px-4 font-semibold shadow-[0_0_14px_rgba(52,211,153,0.28)]" />{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}{files.length > 0 && <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"><Download className="size-3.5" />{(totalFilesSize / (1024 * 1024)).toFixed(1)} MB</span>}</div>}
         </CardContent>
       </Card>
     })}</div>
