@@ -2,8 +2,10 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getAccessStatus } from '@/lib/access'
 import { can } from '@/lib/roles'
-import { parseQuickPaste, titleFromUrl } from '@/lib/quick-resource'
-import { imageTypeFromUrl } from '@/lib/image-links'
+import { mergeMedia, parseQuickPaste, titleFromUrl } from '@/lib/quick-resource'
+import { imageNameFromUrl, imageTypeFromUrl, normalizeImageUrl } from '@/lib/image-links'
+import { MAX_IMAGES, typeLabels } from '@/lib/resource-config'
+import type { ResourceType, TaskPriority } from '@/lib/types'
 import { VIDEO_TYPE } from '@/lib/youtube'
 
 const MAX_TEXT = 6000
@@ -16,6 +18,9 @@ const json = (body: Record<string, unknown>, status = 200) => NextResponse.json(
  * Recibe el mismo texto que el guardado rápido ("<enlace>\n<título>\n<texto seleccionado>"),
  * lo analiza con parseQuickPaste y crea el recurso con la sesión de la persona (cookies),
  * sin que la extensión tenga que iniciar sesión ni guardar ninguna clave.
+ *
+ * Opcionalmente (formulario de la extensión): `images` (enlaces de imágenes ya subidas a Imgur o
+ * arrastradas; la primera es la portada), `priority` y `resourceType`.
  *
  * Seguridad:
  *  · Solo admin (igual que el formulario de Recursos); las políticas RLS siguen mandando.
@@ -41,18 +46,30 @@ export async function POST(request: NextRequest) {
     if (!access.isMember || !can.editResources(access.role)) return json({ error: 'forbidden_role' }, 403)
 
     let text = ''
+    let extraImages: string[] = []
+    let priority: TaskPriority = 'medium'
+    let resourceType: ResourceType | null = null
     try {
-      const body = (await request.json()) as { text?: unknown }
+      const body = (await request.json()) as { text?: unknown; images?: unknown; priority?: unknown; resourceType?: unknown }
       text = typeof body.text === 'string' ? body.text.slice(0, MAX_TEXT) : ''
+      if (Array.isArray(body.images)) extraImages = body.images.filter((item): item is string => typeof item === 'string').slice(0, MAX_IMAGES)
+      if (body.priority === 'low' || body.priority === 'medium' || body.priority === 'high') priority = body.priority
+      if (typeof body.resourceType === 'string' && Object.keys(typeLabels).includes(body.resourceType)) resourceType = body.resourceType as ResourceType
     } catch {
       return json({ error: 'bad_request' }, 400)
     }
 
     const draft = parseQuickPaste(text)
+    // Imágenes añadidas a mano: van primero (la primera es la portada), sin repetir y con un máximo.
+    const manualImages = extraImages.flatMap((raw) => {
+      const normalized = normalizeImageUrl(raw)
+      return 'url' in normalized ? [{ url: normalized.url, name: imageNameFromUrl(normalized.url) }] : []
+    })
+    draft.images = mergeMedia(manualImages, draft.images, (image) => image.url, []).slice(0, MAX_IMAGES)
     if (!draft.title && !draft.url && !draft.downloadUrl && draft.images.length === 0 && draft.videos.length === 0) {
       return json({ error: 'empty' }, 400)
     }
-    const title = draft.title || titleFromUrl(draft.url || draft.downloadUrl || draft.videos[0]?.url || '') || 'Recurso sin título'
+    const title = draft.title || titleFromUrl(draft.url || draft.downloadUrl || draft.videos[0]?.url || draft.images[0]?.url || '') || 'Recurso sin título'
 
     // Evita duplicados por un doble clic o por guardar dos veces la misma página.
     if (draft.url) {
@@ -65,9 +82,9 @@ export async function POST(request: NextRequest) {
       .insert({
         title,
         description: draft.description || null,
-        resource_type: draft.resourceType,
+        resource_type: resourceType ?? draft.resourceType,
         status: 'pending',
-        priority: 'medium',
+        priority,
         url: draft.url || null,
         download_url: draft.downloadUrl || null,
         tags: [],
