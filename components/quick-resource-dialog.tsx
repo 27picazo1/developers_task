@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import { mergeMedia, parseQuickPaste } from '@/lib/quick-resource'
 import { imageNameFromUrl, imageTypeFromUrl, normalizeImageUrl } from '@/lib/image-links'
 import { joinDownloadLinks, parseDownloadLinks } from '@/lib/download-links'
-import { uploadImageToImgur } from '@/lib/imgur-upload'
+import { uploadImage } from '@/lib/image-upload'
 import { VIDEO_TYPE, parseYouTube, youTubeWatchUrl, type YouTubeRef } from '@/lib/youtube'
 import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, typeLabels } from '@/lib/resource-config'
 import { priorityLabels } from '@/lib/priority-config'
@@ -44,8 +44,8 @@ const bookmarkletCode = () =>
 /**
  * Guardado rápido de recursos, disponible desde cualquier página (botón "Recurso" de la cabecera).
  *  · Se pega un enlace o un texto con enlaces y el formulario se rellena solo.
- *  · Se arrastran imágenes (o se pegan capturas con Ctrl+V): se suben a Imgur y se guarda su enlace.
- *  · Hay campos para pegar enlaces de imágenes (Imgur…) y de vídeos de YouTube.
+ *  · Se arrastran imágenes (o se pegan capturas con Ctrl+V): se suben (ImgBB o Imgur) y se guarda su enlace.
+ *  · Hay campos para pegar enlaces de imágenes y de vídeos de YouTube.
  *  · Ctrl+Enter guarda. Lo que necesite más cuidado (archivos) se completa luego con "Editar".
  */
 export function QuickResourceDialog({
@@ -121,7 +121,7 @@ export function QuickResourceDialog({
 
   const dropRemoved = (id: string) => setRemoved((current) => current.filter((item) => item !== id))
 
-  // ---------- imágenes: arrastrar, pegar captura o elegir archivo → Imgur ----------
+  // ---------- imágenes: arrastrar, pegar captura o elegir archivo → alojamiento de imágenes ----------
   const uploadFiles = async (source: FileList | File[] | null) => {
     const files = Array.from(source ?? []).filter((file) => file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(file.name))
     if (!files.length) return
@@ -146,13 +146,13 @@ export function QuickResourceDialog({
       const preview = URL.createObjectURL(file)
       setUploading((list) => [...list, { id, name: file.name, preview }])
       try {
-        const result = await uploadImageToImgur(file)
+        const result = await uploadImage(file)
         if (current !== session.current) return
         setManualImages((list) => (list.some((item) => item.url === result.url) ? list : [...list, { url: result.url, name: file.name }]))
         dropRemoved(result.url)
       } catch (error) {
         if (current === session.current) {
-          toast.error(`No se pudo subir ${file.name} a Imgur: ${error instanceof Error ? error.message : 'error desconocido'}`)
+          toast.error(`No se pudo subir ${file.name}: ${error instanceof Error ? error.message : 'error desconocido'}`)
         }
       } finally {
         URL.revokeObjectURL(preview)
@@ -161,7 +161,7 @@ export function QuickResourceDialog({
     }))
   }
 
-  // ---------- enlaces sueltos de imagen (Imgur…) y de YouTube ----------
+  // ---------- enlaces sueltos de imagen y de YouTube ----------
   const addImageLink = () => {
     const value = imageLink.trim()
     if (!value) return
@@ -333,7 +333,7 @@ export function QuickResourceDialog({
       >
         <DialogHeader>
           <DialogTitle>Guardar recurso rápido</DialogTitle>
-          <DialogDescription>Pega un enlace o un texto con enlaces, y arrastra o pega imágenes: se suben a Imgur.</DialogDescription>
+          <DialogDescription>Pega un enlace o un texto con enlaces, y arrastra o pega imágenes: se suben solas.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -354,7 +354,7 @@ export function QuickResourceDialog({
               }`}
             >
               <ImagePlus className="size-4" />
-              Arrastra imágenes, pégalas con Ctrl+V o haz clic · se suben a Imgur
+              Arrastra imágenes, pégalas con Ctrl+V o haz clic · se suben solas
               <input
                 id="quick-images"
                 type="file"
@@ -379,7 +379,7 @@ export function QuickResourceDialog({
                       addImageLink()
                     }
                   }}
-                  placeholder="Enlace de imagen (imgur…)"
+                  placeholder="Enlace de imagen (imgur, ibb.co…)"
                   aria-label="Pegar enlace de imagen"
                 />
                 <Button type="button" variant="outline" onClick={addImageLink} disabled={!imageLink.trim()}>Añadir</Button>
@@ -420,7 +420,7 @@ export function QuickResourceDialog({
                 </div>
               ))}
               {uploading.map((item) => (
-                <div key={item.id} className="relative" role="status" aria-label={`Subiendo ${item.name} a Imgur`}>
+                <div key={item.id} className="relative" role="status" aria-label={`Subiendo ${item.name}`}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={item.preview} alt="" className="aspect-video h-14 rounded-md border border-border/70 object-cover opacity-50" />
                   <span className="absolute inset-0 flex items-center justify-center">
@@ -505,7 +505,7 @@ export function QuickResourceDialog({
 
         <DialogFooter className="gap-2 sm:justify-between">
           <span className="self-center text-xs text-muted-foreground" role="status">
-            {uploading.length > 0 ? `Subiendo ${uploading.length} ${uploading.length === 1 ? 'imagen' : 'imágenes'} a Imgur…` : 'Ctrl+Enter para guardar'}
+            {uploading.length > 0 ? `Subiendo ${uploading.length} ${uploading.length === 1 ? 'imagen' : 'imágenes'}…` : 'Ctrl+Enter para guardar'}
           </span>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button type="button" variant="outline" disabled={busy || !fields.title.trim()} onClick={() => void save(true)}>

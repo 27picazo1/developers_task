@@ -4,10 +4,15 @@ import { getAccessStatus } from '@/lib/access'
 import { can } from '@/lib/roles'
 
 /**
- * Entrega el Client-ID de Imgur a quien puede editar recursos (admin) para que suba las imágenes
- * directamente desde su navegador a Imgur. Se hace así porque Vercel no admite peticiones de más de
- * 4,5 MB a una función y una captura de pantalla puede pesar más. El Client-ID no es una clave secreta
- * (Imgur lo diseña para usarse en el navegador): solo identifica la aplicación.
+ * Entrega la clave del servicio de imágenes a quien puede editar recursos (admin) para que suba las
+ * imágenes directamente desde su navegador. Se hace así porque Vercel no admite peticiones de más de
+ * 4,5 MB a una función y una captura de pantalla puede pesar más.
+ *
+ *  · IMGUR_CLIENT_ID   → Imgur (solo si ya lo tenías: Imgur ya no admite registros nuevos).
+ *  · IMGBB_API_KEY     → ImgBB.
+ *  · FREEIMAGE_API_KEY → freeimage.host.
+ * Se devuelven todos los configurados, en ese orden: el navegador prueba el siguiente si uno falla
+ * (por ejemplo Imgur limita las subidas). Las claves solo se entregan a admins con sesión iniciada.
  */
 export async function GET() {
   try {
@@ -18,12 +23,17 @@ export async function GET() {
     const access = await getAccessStatus(supabase, user.id)
     if (!access.isMember || !can.editResources(access.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const clientId = process.env.IMGUR_CLIENT_ID
-    if (!clientId) return NextResponse.json({ error: 'Imgur no está configurado (falta IMGUR_CLIENT_ID en Vercel).' }, { status: 500 })
-
-    return NextResponse.json({ clientId }, { headers: { 'Cache-Control': 'private, no-store' } })
+    const providers: Array<{ provider: string; clientId?: string; apiKey?: string }> = []
+    if (process.env.IMGUR_CLIENT_ID) providers.push({ provider: 'imgur', clientId: process.env.IMGUR_CLIENT_ID })
+    if (process.env.IMGBB_API_KEY) providers.push({ provider: 'imgbb', apiKey: process.env.IMGBB_API_KEY })
+    if (process.env.FREEIMAGE_API_KEY) providers.push({ provider: 'freeimage', apiKey: process.env.FREEIMAGE_API_KEY })
+    if (!providers.length) {
+      return NextResponse.json({ error: 'No hay servicio de imágenes configurado (falta IMGBB_API_KEY o FREEIMAGE_API_KEY en Vercel).' }, { status: 500 })
+    }
+    // Además de la lista se repite el primero en la raíz, para versiones antiguas de la extensión.
+    return NextResponse.json({ ...providers[0], providers }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch {
-    return NextResponse.json({ error: 'No se pudo comprobar Imgur' }, { status: 500 })
+    return NextResponse.json({ error: 'No se pudo comprobar el servicio de imágenes' }, { status: 500 })
   }
 }
 

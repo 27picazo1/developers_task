@@ -51,6 +51,12 @@ export function titleFromUrl(link: string): string {
   }
 }
 
+/** Tipo de recurso a partir del título, el texto y los enlaces (un repositorio de GitHub sin más pistas se toma como script). */
+export function inferResourceType(title: string, description: string, url: string, downloadUrl: string): ResourceType {
+  const type = suggestResourceType([title, description, url, downloadUrl].join(' '))
+  return type === 'other' && /github\.com/i.test(url + downloadUrl) ? 'script' : type
+}
+
 /**
  * Analiza un texto pegado (un enlace, varios, o un texto con enlaces) y propone el recurso:
  *  · enlaces de imagen (imgur, .png…) → imágenes (la primera será la portada)
@@ -101,8 +107,7 @@ export function parseQuickPaste(text: string): QuickDraft {
   const title = (lines[0] ?? titleFromUrl(url || downloads[0] || videos[0]?.url || '')).slice(0, 120)
   const description = [...lines.slice(1), ...extraLinks].join('\n').slice(0, 2000)
 
-  let resourceType = suggestResourceType([title, description, url, downloadUrl].join(' '))
-  if (resourceType === 'other' && /github\.com/i.test(url + downloadUrl)) resourceType = 'script'
+  const resourceType = inferResourceType(title, description, url, downloadUrl)
 
   return { title, url, downloadUrl, description, resourceType, images, videos }
 }

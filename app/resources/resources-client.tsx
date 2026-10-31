@@ -9,7 +9,7 @@ import { ALLOWED_IMAGE_TYPES, MAX_IMAGES, statusColors, statusLabels, typeColors
 import { comparePriority, priorityLabels } from '@/lib/priority-config'
 import { PriorityBadge } from '@/components/priority-badge'
 import { DownloadLinks } from '@/components/download-links'
-import { uploadImageToImgur } from '@/lib/imgur-upload'
+import { uploadImage } from '@/lib/image-upload'
 import { joinDownloadLinks, parseDownloadLinks } from '@/lib/download-links'
 import { VIDEO_TYPE, fetchYouTubeTitle, parseYouTube, youTubeWatchUrl, type YouTubeRef } from '@/lib/youtube'
 import { YouTubeEmbed } from '@/components/youtube-embed'
@@ -194,7 +194,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
   const [uploadProgress, setUploadProgress] = useState('')
   const [uploadError, setUploadError] = useState('')
   const [draggingImages, setDraggingImages] = useState(false)
-  // Imágenes que se están subiendo a Imgur ahora mismo (se bloquea Guardar hasta que acaben).
+  // Imágenes que se están subiendo ahora mismo al alojamiento de imágenes (se bloquea Guardar hasta que acaben).
   const [imgurUploading, setImgurUploading] = useState(0)
   const editorSession = useRef(0)
   const previewUrls = useRef<string[]>([])
@@ -305,13 +305,13 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
     }
     if (!valid.length) return
 
-    // Al soltarlas se suben a Imgur y solo se guarda el enlace (igual que las imágenes por enlace).
-    // Si Imgur no está disponible, se quedan como antes: se suben a tu almacenamiento al guardar.
+    // Al soltarlas se suben (ImgBB o Imgur, según lo configurado) y solo se guarda el enlace, igual que las imágenes por enlace.
+    // Si no hay servicio configurado o falla, se quedan como antes: se suben a tu almacenamiento al guardar.
     const session = editorSession.current
     setImgurUploading((count) => count + valid.length)
     const results = await Promise.all(valid.map(async (image) => {
       try {
-        return { image, uploaded: await uploadImageToImgur(image.file), error: '' }
+        return { image, uploaded: await uploadImage(image.file), error: '' }
       } catch (error) {
         return { image, uploaded: null, error: error instanceof Error ? error.message : 'Error desconocido' }
       }
@@ -342,7 +342,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
     if (links.length) setDraftLinks((current) => [...current, ...links])
     if (fallback.length) {
       setDraftImages((current) => [...current, ...fallback])
-      toast.warning(`No se pudo subir a Imgur (${firstError}). Se subirá a tu almacenamiento al guardar.`)
+      toast.warning(`No se pudieron subir las imágenes en línea (${firstError}). Se subirán a tu almacenamiento al guardar.`)
     }
     const first = links[0]?.id ?? fallback[0]?.id
     if (first) setBannerId((current) => current || first)
@@ -702,7 +702,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
               <div className="flex flex-col gap-2"><Label htmlFor="resource-download">Enlaces de descarga <span className="font-normal text-muted-foreground">(uno por línea)</span></Label><Textarea id="resource-download" rows={2} value={form.download_url} onChange={(e) => setForm({ ...form, download_url: e.target.value })} placeholder={'https://...\nhttps://...'} /></div>
               <div className="flex flex-col gap-2"><Label htmlFor="resource-notes">Notas privadas</Label><Textarea id="resource-notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Dependencias, versión, instalación..." /></div>
               <section className="flex flex-col gap-2" aria-labelledby="resource-images-title">
-                <div><Label id="resource-images-title">Imágenes</Label><p className="mt-1 text-xs text-muted-foreground">Hasta {MAX_IMAGES} imágenes, 8 MB cada una. JPG, PNG, WebP o GIF. Al soltarlas se suben a Imgur.</p></div>
+                <div><Label id="resource-images-title">Imágenes</Label><p className="mt-1 text-xs text-muted-foreground">Hasta {MAX_IMAGES} imágenes, 8 MB cada una. JPG, PNG, WebP o GIF. Al soltarlas se suben y solo se guarda su enlace.</p></div>
                 <label
                   htmlFor="resource-images"
                   className={`flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-4 py-3 text-sm transition-colors focus-within:ring-2 focus-within:ring-ring ${draggingImages ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground hover:border-primary/60 hover:text-foreground'}`}
@@ -733,7 +733,7 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
                   <Input value={linkInput} onChange={(e) => setLinkInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addImageLink() } }} placeholder="…o pega un enlace de imagen (imgur .png, etc.)" aria-label="Enlace de imagen" />
                   <Button type="button" variant="outline" onClick={() => void addImageLink()} disabled={checkingLink || !linkInput.trim()}>{checkingLink ? <Loader2 className="size-4 animate-spin" /> : <Link2 data-icon="inline-start" />}Añadir</Button>
                 </div>
-                {imgurUploading > 0 && <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status"><Loader2 className="size-3.5 animate-spin" />Subiendo {imgurUploading} {imgurUploading === 1 ? 'imagen' : 'imágenes'} a Imgur…</p>}
+                {imgurUploading > 0 && <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status"><Loader2 className="size-3.5 animate-spin" />Subiendo {imgurUploading} {imgurUploading === 1 ? 'imagen' : 'imágenes'}…</p>}
                 <p className="text-xs text-muted-foreground">Las imágenes por enlace no se suben: solo se guarda la dirección.</p>
                 {(activeImages.length + draftImages.length + draftLinks.length > 0) && <p className="text-xs text-muted-foreground">Selecciona una portada. El resto aparecerá como miniaturas enlazadas.</p>}
                 <div className="grid grid-cols-3 gap-2">
@@ -827,9 +827,10 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
       const banner = imageAttachments.find((attachment) => attachment.is_banner)
       const galleryImages = [...(banner ? [banner] : []), ...imageAttachments.filter((attachment) => attachment.id !== banner?.id)]
       const thumbnails = imageAttachments.filter((attachment) => attachment.id !== banner?.id)
+      // Con vídeo, el vídeo es la preview principal y todas las imágenes van en la fila de miniaturas.
+      const rowImages = videos.length > 0 ? galleryImages : thumbnails
       const totalFilesSize = files.reduce((sum, attachment) => sum + (attachment.file_size || 0), 0)
       return <Card key={item.id} className="group gap-0 overflow-hidden border-border/60 bg-card/70 py-0 shadow-[0_8px_28px_rgba(0,0,0,0.28)]">
-        {banner && <div className="m-1.5 mb-0"><div className="relative aspect-video overflow-hidden rounded-xl border border-border/50 bg-muted shadow-sm"><button type="button" className="group absolute inset-0 block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /></button><span className="pointer-events-none absolute right-2.5 top-2.5 rounded-md border border-white/10 bg-black/60 px-2 py-0.5 text-xs text-white">1/{galleryImages.length}</span></div></div>}
         <CardHeader className="gap-0 px-4 pb-0 pt-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex flex-wrap gap-1.5"><Badge className={typeColors[item.resource_type]}>{typeLabels[item.resource_type]}</Badge><Badge className={statusColors[item.status ?? 'pending']}>{statusLabels[item.status ?? 'pending']}</Badge><PriorityBadge priority={item.priority} /></div>
@@ -839,8 +840,9 @@ export function ResourcesClient({ profile, role, initialResources }: { profile: 
           <CardDescription className="mt-2 line-clamp-2">{item.description || 'Sin descripción'}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-3">
+          {videos.length === 0 && banner && <div className="relative aspect-video overflow-hidden rounded-xl border border-border/50 bg-muted shadow-sm"><button type="button" className="group absolute inset-0 block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => openLightbox(galleryImages, banner.id)} aria-label={`Ver portada de ${item.title} en grande`}><img src={imageUrl(banner.file_path)} alt={`Portada: ${item.title}`} referrerPolicy="no-referrer" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /></button><span className="pointer-events-none absolute right-2.5 top-2.5 rounded-md border border-white/10 bg-black/60 px-2 py-0.5 text-xs text-white">1/{galleryImages.length}</span></div>}
           {videos.length > 0 && <div className="flex flex-col gap-3">{videos.map((video) => { const yt = parseYouTube(video.file_path); return yt ? <div key={video.id} className="flex flex-col gap-1.5"><YouTubeEmbed key={yt.id} id={yt.id} start={yt.start} title={video.file_name} /><p className="truncate text-xs text-muted-foreground" title={video.file_name}>{video.file_name}</p></div> : canOpenReferences ? <a key={video.id} href={video.file_path} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><ExternalLink className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></a> : <span key={video.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><Video className="size-4 shrink-0" /><span className="truncate">{video.file_name}</span></span> })}</div>}
-          {thumbnails.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{thumbnails.map((attachment) => <button type="button" key={attachment.id} onClick={() => openLightbox(galleryImages, attachment.id)} title={`Ver ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="h-9 w-16 cursor-zoom-in object-cover transition-opacity hover:opacity-80" /></button>)}</div>}
+          {rowImages.length > 0 && <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Más imágenes del recurso">{rowImages.map((attachment) => <button type="button" key={attachment.id} onClick={() => openLightbox(galleryImages, attachment.id)} title={`Ver ${attachment.file_name}`} className="shrink-0 overflow-hidden rounded-md border border-border/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><img src={imageUrl(attachment.file_path)} alt={attachment.file_name} referrerPolicy="no-referrer" className="h-9 w-16 cursor-zoom-in object-cover transition-opacity hover:opacity-80" /></button>)}</div>}
           {files.length > 0 && <div className="flex flex-col gap-1.5">{files.map((attachment) => { const fileLabel = `${attachment.file_name} • ${(attachment.file_size / (1024 * 1024)).toFixed(1)} MB`; return canDownload && attachment.file_path ? <a key={attachment.id} href={imageUrl(attachment.file_path)} target="_blank" rel="noreferrer" className="flex items-center gap-2 truncate text-sm text-primary hover:underline"><FileText className="size-4 shrink-0" /><span className="truncate">{fileLabel}</span></a> : <div key={attachment.id} className="flex items-center gap-2 truncate text-sm text-muted-foreground"><FileText className="size-4 shrink-0" /><span className="truncate">{fileLabel}</span></div> })}</div>}
           <div className="flex flex-wrap gap-1.5">{item.tags.map((tag) => <Badge key={tag} variant="outline" className="rounded-lg bg-white/[0.03] px-3 text-xs font-normal text-foreground/80">#{tag}</Badge>)}</div>
           {canOpenReferences && <div className="-mx-4 mt-auto flex items-center gap-2 border-t border-border/60 px-4 pt-3">{item.url && <Button asChild variant="outline" size="sm" className="px-4 font-semibold"><a href={item.url} target="_blank" rel="noreferrer"><ExternalLink data-icon="inline-start" />Referencia</a></Button>}<DownloadLinks value={item.download_url} className="px-4 font-semibold shadow-[0_0_14px_rgba(52,211,153,0.28)]" />{!item.url && !item.download_url && <span className="flex items-center gap-2 text-xs text-muted-foreground"><Link2 className="size-3.5" />Sin enlaces</span>}{files.length > 0 && <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"><Download className="size-3.5" />{(totalFilesSize / (1024 * 1024)).toFixed(1)} MB</span>}</div>}

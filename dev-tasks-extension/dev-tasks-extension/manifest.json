@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Dev Tasks · Guardar en Recursos",
+  "version": "1.1.0",
+  "description": "Guarda la página que estás viendo en los Recursos de FiveM Dev Tasks: con un formulario (arrastra imágenes y pulsa Enviar) o directamente con un atajo.",
+  "action": {
+    "default_title": "Guardar en Recursos (Alt+Shift+R)",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["activeTab", "scripting", "contextMenus"],
+  "host_permissions": [
+    "https://v0-developer-task-app.vercel.app/*",
+    "http://localhost:3000/*",
+    "https://api.imgur.com/*"
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+Shift+R" },
+      "description": "Abrir el formulario para guardar la página en Recursos"
+    },
+    "quick-save": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Guardar la página actual directamente, sin formulario"
+    }
+  }
+}
