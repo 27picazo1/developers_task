@@ -1,28 +1,33 @@
 {
   "manifest_version": 3,
   "name": "Dev Tasks · Guardar en Recursos",
-  "version": "1.1.0",
-  "description": "Guarda la página que estás viendo en los Recursos de FiveM Dev Tasks: con un formulario (arrastra imágenes y pulsa Enviar) o directamente con un atajo.",
+  "version": "2.0.0",
+  "description": "Guarda la página que estás viendo en los Recursos de FiveM Dev Tasks desde un panel desplegable: arrastra imágenes, añade descargas y actualiza lo ya guardado.",
   "action": {
     "default_title": "Guardar en Recursos (Alt+Shift+R)",
     "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png" }
   },
   "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "background": { "service_worker": "background.js" },
-  "permissions": ["activeTab", "scripting", "contextMenus"],
+  "permissions": ["activeTab", "scripting", "contextMenus", "storage"],
   "host_permissions": [
     "https://v0-developer-task-app.vercel.app/*",
     "http://localhost:3000/*",
-    "https://api.imgur.com/*"
+    "https://api.imgur.com/*",
+    "https://api.imgbb.com/*",
+    "https://freeimage.host/*"
+  ],
+  "web_accessible_resources": [
+    { "resources": ["panel.html"], "matches": ["http://*/*", "https://*/*"], "use_dynamic_url": true }
   ],
   "commands": {
     "_execute_action": {
       "suggested_key": { "default": "Alt+Shift+R" },
-      "description": "Abrir el formulario para guardar la página en Recursos"
+      "description": "Abrir / cerrar el panel para guardar la página en Recursos"
     },
     "quick-save": {
       "suggested_key": { "default": "Alt+Shift+S" },
-      "description": "Guardar la página actual directamente, sin formulario"
+      "description": "Guardar la página actual directamente, sin panel"
     }
   }
 }

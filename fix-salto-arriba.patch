@@ -1,0 +1,44 @@
+diff -ruN a/app/resources/resources-client.tsx b/app/resources/resources-client.tsx
+--- a/app/resources/resources-client.tsx	2026-11-01 20:08:46.988683154 +0000
++++ b/app/resources/resources-client.tsx	2026-11-01 20:08:46.991968661 +0000
+@@ -197,6 +197,9 @@
+   // Imágenes que se están subiendo ahora mismo al alojamiento de imágenes (se bloquea Guardar hasta que acaben).
+   const [imgurUploading, setImgurUploading] = useState(0)
+   const editorSession = useRef(0)
++  // Botón que abrió el editor (el de "Editar" de una tarjeta o el de "Añadir recurso"): al cerrarlo se le devuelve el foco ahí.
++  const dialogOpener = useRef<HTMLElement | null>(null)
++  const rememberOpener = () => { dialogOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null }
+   const previewUrls = useRef<string[]>([])
+ 
+   useEffect(() => () => previewUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
+@@ -245,11 +248,13 @@
+   }
+ 
+   const openNewResource = () => {
++    rememberOpener()
+     resetEditor()
+     setOpen(true)
+   }
+ 
+   const openEditResource = (resource: ResourceWithAttachments) => {
++    rememberOpener()
+     resetEditor()
+     setEditing(resource)
+     setForm({
+@@ -686,7 +691,15 @@
+       {canEdit && (
+       <Dialog open={open} onOpenChange={onDialogOpenChange}>
+         <DialogTrigger asChild><Button size="lg" className="font-bold shadow-[0_0_22px_rgba(52,211,153,0.35)] sm:mt-9" onClick={openNewResource}><Plus data-icon="inline-start" />Añadir recurso</Button></DialogTrigger>
+-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
++        <DialogContent
++          className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
++          onCloseAutoFocus={(event) => {
++            // Por defecto el foco vuelve al botón "Añadir recurso" (arriba de la página) y la página salta hasta allí al guardar.
++            // Se devuelve al botón que abrió el editor y sin mover el scroll.
++            event.preventDefault()
++            dialogOpener.current?.focus({ preventScroll: true })
++          }}
++        >
+           <DialogHeader><DialogTitle>{editing ? 'Editar recurso' : 'Nuevo recurso'}</DialogTitle></DialogHeader>
+           <form onSubmit={saveResource}>
+             <div className="flex flex-col gap-4">
